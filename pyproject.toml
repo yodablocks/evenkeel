@@ -54,5 +54,9 @@ target-version = "py310"
 [tool.ruff.lint]
 select = ["E", "W", "F", "I", "B", "UP"]
 
+[tool.ruff.lint.per-file-ignores]
+# The Jev prompt is kept word for word as in keel, so both classifiers ask the same question.
+"langchain_evenkeel/jev.py" = ["E501"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
