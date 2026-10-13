@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import errno as _errno
 import random as _random
+import socket as _socket
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any, Literal, Protocol
@@ -77,6 +79,13 @@ _TRANSIENT_NAMES = frozenset(
     }
 )
 _VALIDATION_NAMES = frozenset({"ValidationError"})
+# Network error codes, as strings on `code` (keel's list) or as numbers on `errno` (OSError, socket.gaierror).
+_TRANSIENT_CODES = frozenset(
+    {"ETIMEDOUT", "ECONNRESET", "ECONNREFUSED", "EPIPE", "EAI_AGAIN", "UND_ERR_SOCKET"}
+)
+_TRANSIENT_ERRNOS = frozenset(
+    {_errno.ETIMEDOUT, _errno.ECONNRESET, _errno.ECONNREFUSED, _errno.EPIPE, _socket.EAI_AGAIN}
+)
 
 
 def error_message(error: BaseException) -> str:
@@ -93,7 +102,10 @@ def _http_status(error: BaseException) -> int | None:
 
 
 def _is_network_error(error: BaseException) -> bool:
-    return isinstance(error, (TimeoutError, ConnectionError)) or type(error).__name__ in _TRANSIENT_NAMES
+    if isinstance(error, (TimeoutError, ConnectionError)) or type(error).__name__ in _TRANSIENT_NAMES:
+        return True
+    code, number = getattr(error, "code", None), getattr(error, "errno", None)
+    return (isinstance(code, str) and code in _TRANSIENT_CODES) or number in _TRANSIENT_ERRNOS
 
 
 class RuleClassifier:

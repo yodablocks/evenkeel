@@ -128,3 +128,21 @@ def test_policy_fails(kind):
 def test_policy_names_errors_without_a_message():
     action = default_policy()(FailureVerdict("fatal", 0.5), ctx(KeyError()))
     assert action == Fail(reason="KeyError")
+
+
+def test_temporary_dns_failure_is_transient():
+    import socket
+
+    error = socket.gaierror(socket.EAI_AGAIN, "Temporary failure in name resolution")
+    assert RuleClassifier().classify(ctx(error)).kind == "transient"
+
+
+@pytest.mark.parametrize("code", ["ETIMEDOUT", "ECONNRESET", "ECONNREFUSED", "EPIPE", "EAI_AGAIN"])
+def test_network_error_codes_are_transient_as_in_keel(code):
+    error = with_attrs(Exception, f"connect {code}", code=code)
+    assert RuleClassifier().classify(ctx(error)).kind == "transient"
+
+
+def test_network_error_code_on_the_cause_is_transient():
+    error = caused_by(RuntimeError("request failed"), with_attrs(Exception, "x", code="ECONNRESET"))
+    assert RuleClassifier().classify(ctx(error)).kind == "transient"
