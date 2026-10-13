@@ -8,7 +8,7 @@ import time
 from collections.abc import Awaitable, Callable
 from typing import Annotated, Any
 
-from langchain_core.messages import HumanMessage
+from langchain_core.messages import HumanMessage, ToolMessage
 from typing_extensions import NotRequired
 
 from ._compat import (
@@ -19,6 +19,7 @@ from ._compat import (
     GraphBubbleUp,
     ModelRequest,
     ModelResponse,
+    ToolCallRequest,
     interrupt,
 )
 from ._core import AttemptRecord, Decision, attach_attempts, decide, escalation_payload, parse_resume
@@ -33,6 +34,7 @@ from .failure import (
     RetryWithHint,
     RuleClassifier,
     default_policy,
+    error_message,
 )
 
 
@@ -182,3 +184,115 @@ class EvenKeelMiddleware(AgentMiddleware):
                 current = nxt.request
                 continue
             return self._model_result(response, records)
+
+    # Tool calls
+
+    def _tool_next(
+        self,
+        request: ToolCallRequest,
+        ctx: FailureContext,
+        verdict: FailureVerdict,
+        decision: Decision,
+        records: list[AttemptRecord],
+    ) -> _RetryRequest | Command:
+        """Retry the tool, hand the error back to the model, or raise the original error."""
+        call = request.tool_call
+        action = decision.action
+
+        def back_to_model(content: str, status: str = "error") -> Command:
+            records[-1] = {**records[-1], "action": "returned_to_model"}
+            message = ToolMessage(content=content, tool_call_id=call["id"], name=call["name"], status=status)
+            return Command(update={"messages": [message], "evenkeel_attempts": records})
+
+        if isinstance(action, Retry):
+            return _RetryRequest(request, action.delay_s)
+        if isinstance(action, RetryWithHint):
+            return back_to_model(f"Error: {error_message(ctx.error)}. {action.hint}")
+        if verdict.kind == "bad_input":
+            return back_to_model(
+                f"Error: {error_message(ctx.error)}. Fix the arguments and call the tool again."
+            )
+        if isinstance(action, Escalate):
+            resume = parse_resume(
+                interrupt(escalation_payload(ctx, verdict, action.reason)), call_type="tool"
+            )
+            if resume.decision == "retry":
+                return _RetryRequest(request)
+            if resume.decision == "skip":
+                records[-1] = {**records[-1], "action": "skipped_by_reviewer"}
+                message = ToolMessage(content=resume.message, tool_call_id=call["id"], name=call["name"])
+                return Command(update={"messages": [message], "evenkeel_attempts": records})
+        attach_attempts(ctx.error, records)
+        raise ctx.error
+
+    @staticmethod
+    def _tool_result(result: Any, records: list[AttemptRecord]) -> Any:
+        if not records:
+            return result
+        if isinstance(result, ToolMessage):
+            return Command(update={"messages": [result], "evenkeel_attempts": records})
+        if isinstance(result, Command) and isinstance(result.update, dict):
+            existing = list(result.update.get("evenkeel_attempts", []))
+            return Command(
+                graph=result.graph,
+                update={**result.update, "evenkeel_attempts": existing + records},
+                resume=result.resume,
+                goto=result.goto,
+            )
+        return result
+
+    def wrap_tool_call(self, request: ToolCallRequest, handler: Callable[[ToolCallRequest], Any]) -> Any:
+        records: list[AttemptRecord] = []
+        attempt = 0
+        while True:
+            attempt += 1
+            try:
+                result = handler(request)
+            except GraphBubbleUp:
+                raise
+            except Exception as error:
+                ctx = self._context(
+                    error,
+                    step=f"tool:{request.tool_call['name']}",
+                    attempt=attempt,
+                    payload=request.tool_call.get("args"),
+                )
+                verdict = self._classifier.classify(ctx)
+                decision = decide(ctx, verdict, self._policy)
+                records.append(decision.record)
+                nxt = self._tool_next(request, ctx, verdict, decision, records)
+                if isinstance(nxt, Command):
+                    return nxt
+                if nxt.delay_s:
+                    self._sleep(nxt.delay_s)
+                continue
+            return self._tool_result(result, records)
+
+    async def awrap_tool_call(
+        self, request: ToolCallRequest, handler: Callable[[ToolCallRequest], Awaitable[Any]]
+    ) -> Any:
+        records: list[AttemptRecord] = []
+        attempt = 0
+        while True:
+            attempt += 1
+            try:
+                result = await handler(request)
+            except GraphBubbleUp:
+                raise
+            except Exception as error:
+                ctx = self._context(
+                    error,
+                    step=f"tool:{request.tool_call['name']}",
+                    attempt=attempt,
+                    payload=request.tool_call.get("args"),
+                )
+                verdict = await self._classifier.aclassify(ctx)
+                decision = decide(ctx, verdict, self._policy)
+                records.append(decision.record)
+                nxt = self._tool_next(request, ctx, verdict, decision, records)
+                if isinstance(nxt, Command):
+                    return nxt
+                if nxt.delay_s:
+                    await self._asleep(nxt.delay_s)
+                continue
+            return self._tool_result(result, records)
