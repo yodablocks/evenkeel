@@ -8,7 +8,7 @@ import time
 from collections.abc import Awaitable, Callable
 from typing import Annotated, Any
 
-from langchain_core.messages import HumanMessage, ToolMessage
+from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 from typing_extensions import NotRequired
 
 from ._compat import (
@@ -20,9 +20,18 @@ from ._compat import (
     ModelRequest,
     ModelResponse,
     ToolCallRequest,
+    hook_config,
     interrupt,
 )
-from ._core import AttemptRecord, Decision, attach_attempts, decide, escalation_payload, parse_resume
+from ._core import (
+    AttemptRecord,
+    Decision,
+    attach_attempts,
+    decide,
+    escalation_payload,
+    parse_budget_resume,
+    parse_resume,
+)
 from .budget import PriceTable
 from .failure import (
     Classifier,
@@ -296,3 +305,39 @@ class EvenKeelMiddleware(AgentMiddleware):
                     await self._asleep(nxt.delay_s)
                 continue
             return self._tool_result(result, records)
+
+    # Budget
+
+    def after_model(self, state: EvenKeelState, runtime: Any) -> dict[str, Any] | None:
+        if self._prices is None:
+            return None
+        message = state["messages"][-1]
+        if not isinstance(message, AIMessage):
+            return None
+        spent = state.get("evenkeel_spent_usd", 0.0) + self._prices.cost_usd(message)
+        return {"evenkeel_spent_usd": spent}
+
+    @hook_config(can_jump_to=["end"])
+    def before_model(self, state: EvenKeelState, runtime: Any) -> dict[str, Any] | None:
+        budget = state.get("evenkeel_budget_usd", self._budget_usd)
+        if budget is None:
+            return None
+        spent = state.get("evenkeel_spent_usd", 0.0)
+        if spent < budget:
+            return None
+        answer = interrupt(
+            {
+                "type": "evenkeel_budget",
+                "spent_usd": round(spent, 6),
+                "budget_usd": budget,
+                "accepted": [{"approve": True, "budget_usd": "<more than spent_usd>"}, {"approve": False}],
+            }
+        )
+        new_budget = parse_budget_resume(answer, spent_usd=spent)
+        if new_budget is not None:
+            return {"evenkeel_budget_usd": new_budget}
+        note = AIMessage(
+            f"Stopped by evenkeel: spent ${spent:.4f} of a ${budget:.4f} budget "
+            "and the increase was declined."
+        )
+        return {"messages": [note], "jump_to": "end"}
