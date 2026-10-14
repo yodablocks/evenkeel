@@ -101,7 +101,9 @@ budget.
 - **Budgets can overshoot by one call.** The check runs before a model call, but a call's cost is known only
   after it. keel has the same limitation.
 - **No built-in prices.** You supply them; a model without a price, or a response without token usage, is an
-  error rather than a silent $0. Dated names such as `gpt-4o-mini-2024-07-18` match the key `gpt-4o-mini`.
+  error rather than a silent $0. Dated or versioned names (`gpt-4o-mini-2024-07-18`, `claude-3-5-sonnet-20241022`, `gpt-4-0613`, `...-latest`)
+  use the price of their base name; any other variant (`gpt-4o-mini` against `gpt-4`, `gpt-4-turbo`) needs its own
+  entry.
 - **On resume after an escalation, the failing call runs once more** before the decision applies, because
   LangGraph re-runs the paused node. For a tool with side effects, make it idempotent or use `skip`.
 - **Classification is only as good as the classifier.** Rules only recognise explicit signals (status codes,
