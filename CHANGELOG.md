@@ -5,6 +5,16 @@ All notable changes to this project are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.1] - 2026-10-14
+
+### Fixed
+- Price keys match only an exact model name or that name plus a date or version suffix (`-2024-07-18`,
+  `-20241022`, `-0613`, `-001`, `-latest`). Plain prefix matching let a different model borrow a price
+  (`gpt-4` priced `gpt-4o-mini` and `gpt-4-turbo`; `claude-3` priced `claude-3-5-sonnet`).
+
+### Documentation
+- README: measured classifier accuracy on keel's error sets, rules and `JevClassifier`.
+
 ## [0.1.0] - 2026-10-13
 
 First release.
@@ -17,4 +27,5 @@ First release.
 - `RuleClassifier` and `JevClassifier` (optional `jev` extra), ported from keel.
 - Contract tests for the LangChain, LangGraph and typesafe-sdk behaviour the middleware relies on.
 
+[0.1.1]: https://github.com/yodablocks/evenkeel/releases/tag/v0.1.1
 [0.1.0]: https://github.com/yodablocks/evenkeel/releases/tag/v0.1.0
