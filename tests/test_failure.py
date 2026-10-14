@@ -1,6 +1,6 @@
 import pytest
 
-from langchain_evenkeel.failure import (
+from evenkeel.failure import (
     BadInputError,
     BadOutputError,
     Escalate,

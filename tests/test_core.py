@@ -1,6 +1,6 @@
 import pytest
 
-from langchain_evenkeel._core import (
+from evenkeel._core import (
     Resume,
     attach_attempts,
     decide,
@@ -8,7 +8,7 @@ from langchain_evenkeel._core import (
     parse_budget_resume,
     parse_resume,
 )
-from langchain_evenkeel.failure import (
+from evenkeel.failure import (
     Fail,
     FailureContext,
     FailureVerdict,

@@ -45,7 +45,7 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - run: pip install 'ruff>=0.15' && ruff check langchain_evenkeel tests evals
+      - run: pip install 'ruff>=0.15' && ruff check evenkeel tests evals
 
   build:
     name: Build and install the wheel
@@ -60,4 +60,4 @@ jobs:
           python -m build
           python -m venv /tmp/venv
           /tmp/venv/bin/pip install dist/*.whl
-          /tmp/venv/bin/python -c "import langchain_evenkeel as k; print(k.__version__)"
+          /tmp/venv/bin/python -c "import evenkeel as k; print(k.__version__)"

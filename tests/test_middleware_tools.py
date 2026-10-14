@@ -6,8 +6,8 @@ from langchain_core.messages import HumanMessage, ToolMessage
 from langchain_core.tools import tool
 from langgraph.checkpoint.memory import InMemorySaver
 
-from langchain_evenkeel.failure import BadInputError
-from langchain_evenkeel.middleware import EvenKeelMiddleware
+from evenkeel.failure import BadInputError
+from evenkeel.middleware import EvenKeelMiddleware
 from tests.fakes import ScriptedChatModel, ai, tool_call
 
 

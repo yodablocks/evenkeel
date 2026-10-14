@@ -1,4 +1,4 @@
-import langchain_evenkeel
+import evenkeel
 
 
 def test_public_names_import_from_the_package_root():
@@ -17,4 +17,4 @@ def test_public_names_import_from_the_package_root():
         "FailureContext",
         "AttemptRecord",
     ):
-        assert hasattr(langchain_evenkeel, name), name
+        assert hasattr(evenkeel, name), name

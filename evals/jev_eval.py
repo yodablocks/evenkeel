@@ -13,7 +13,7 @@ import datetime as dt
 import json
 from pathlib import Path
 
-from langchain_evenkeel import FailureContext, JevClassifier, RuleClassifier
+from evenkeel import FailureContext, JevClassifier, RuleClassifier
 
 # What keel's default policy does for each kind, used for the "right action" score.
 ACTION_OF = {

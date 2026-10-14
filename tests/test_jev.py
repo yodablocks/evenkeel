@@ -4,8 +4,8 @@ from types import SimpleNamespace
 
 import pytest
 
-from langchain_evenkeel.failure import BadOutputError, FailureContext, FailureVerdict
-from langchain_evenkeel.jev import JevClassifier, describe_failure
+from evenkeel.failure import BadOutputError, FailureContext, FailureVerdict
+from evenkeel.jev import JevClassifier, describe_failure
 
 
 class FakeClient:

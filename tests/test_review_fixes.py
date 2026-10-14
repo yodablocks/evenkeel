@@ -10,9 +10,9 @@ from langchain_core.tools import tool
 from langgraph.checkpoint.memory import InMemorySaver
 from langgraph.types import Command
 
-from langchain_evenkeel._core import decide
-from langchain_evenkeel.budget import ModelPrice, PriceTable
-from langchain_evenkeel.failure import (
+from evenkeel._core import decide
+from evenkeel.budget import ModelPrice, PriceTable
+from evenkeel.failure import (
     Fail,
     FailureContext,
     FailureVerdict,
@@ -20,8 +20,8 @@ from langchain_evenkeel.failure import (
     RuleClassifier,
     default_policy,
 )
-from langchain_evenkeel.jev import JevClassifier
-from langchain_evenkeel.middleware import EvenKeelMiddleware
+from evenkeel.jev import JevClassifier
+from evenkeel.middleware import EvenKeelMiddleware
 from tests.fakes import ScriptedChatModel, ai, tool_call
 
 PRICES = PriceTable({"fake-model": ModelPrice(input_per_mtok=1000, output_per_mtok=2000)})  # $0.20 a call

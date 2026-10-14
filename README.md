@@ -1,4 +1,4 @@
-# langchain-evenkeel
+# evenkeel
 
 Keeps a LangChain agent on an even keel when things fail: failures are classified and handled by kind,
 bad output is retried with a hint, spend is tracked in dollars with a budget, and failures that need a person
@@ -20,15 +20,15 @@ for approvals fixed in advance.
 
 ## Install
 
-    pip install langchain-evenkeel          # rule-based classification
-    pip install "langchain-evenkeel[jev]"   # adds TypeSafe's Jev classifier
+    pip install evenkeel          # rule-based classification
+    pip install "evenkeel[jev]"   # adds TypeSafe's Jev classifier
 
 ## Use
 
 ```python
 from langchain.agents import create_agent
 from langgraph.checkpoint.memory import InMemorySaver
-from langchain_evenkeel import EvenKeelMiddleware, ModelPrice, PriceTable
+from evenkeel import EvenKeelMiddleware, ModelPrice, PriceTable
 
 agent = create_agent(
     "openai:gpt-4o-mini",
@@ -47,7 +47,7 @@ With Jev (needs `TYPESAFE_API_KEY`):
 
 ```python
 from typesafe_sdk import TypeSafeClient
-from langchain_evenkeel import EvenKeelMiddleware, JevClassifier
+from evenkeel import EvenKeelMiddleware, JevClassifier
 
 EvenKeelMiddleware(classifier=JevClassifier(TypeSafeClient()))
 ```

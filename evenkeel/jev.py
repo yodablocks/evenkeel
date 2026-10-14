@@ -1,5 +1,5 @@
 """JevClassifier: asks TypeSafe's Jev what kind of failure an error is, with the rule classifier as fallback.
-Ported from keel's src/jev-classifier.ts. Needs the `jev` extra (typesafe-sdk): pip install langchain-evenkeel[jev]."""
+Ported from keel's src/jev-classifier.ts. Needs the `jev` extra (typesafe-sdk): pip install evenkeel[jev]."""
 
 from __future__ import annotations
 

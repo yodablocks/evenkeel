@@ -17,4 +17,4 @@ First release.
 - `RuleClassifier` and `JevClassifier` (optional `jev` extra), ported from keel.
 - Contract tests for the LangChain, LangGraph and typesafe-sdk behaviour the middleware relies on.
 
-[0.1.0]: https://github.com/yodablocks/langchain-evenkeel/releases/tag/v0.1.0
+[0.1.0]: https://github.com/yodablocks/evenkeel/releases/tag/v0.1.0

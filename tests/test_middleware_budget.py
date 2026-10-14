@@ -5,8 +5,8 @@ from langchain_core.tools import tool
 from langgraph.checkpoint.memory import InMemorySaver
 from langgraph.types import Command
 
-from langchain_evenkeel.budget import MissingUsageError, ModelPrice, PriceTable, UnknownModelPriceError
-from langchain_evenkeel.middleware import EvenKeelMiddleware
+from evenkeel.budget import MissingUsageError, ModelPrice, PriceTable, UnknownModelPriceError
+from evenkeel.middleware import EvenKeelMiddleware
 from tests.fakes import ScriptedChatModel, ai, tool_call
 
 # 100 input + 50 output tokens at $1000/$2000 per million = $0.20 per model call.

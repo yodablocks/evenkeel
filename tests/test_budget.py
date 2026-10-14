@@ -1,7 +1,7 @@
 import pytest
 from langchain_core.messages import AIMessage
 
-from langchain_evenkeel.budget import MissingUsageError, ModelPrice, PriceTable, UnknownModelPriceError
+from evenkeel.budget import MissingUsageError, ModelPrice, PriceTable, UnknownModelPriceError
 from tests.fakes import ai
 
 PRICES = PriceTable({"fake-model": ModelPrice(input_per_mtok=1000, output_per_mtok=2000)})

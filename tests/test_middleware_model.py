@@ -5,9 +5,9 @@ from langchain.agents import create_agent
 from langchain_core.messages import HumanMessage
 from langgraph.checkpoint.memory import InMemorySaver
 
-from langchain_evenkeel._compat import AgentMiddleware, interrupt
-from langchain_evenkeel.failure import FailureVerdict
-from langchain_evenkeel.middleware import EvenKeelMiddleware
+from evenkeel._compat import AgentMiddleware, interrupt
+from evenkeel.failure import FailureVerdict
+from evenkeel.middleware import EvenKeelMiddleware
 from tests.fakes import ScriptedChatModel, ai
 
 
@@ -110,6 +110,6 @@ def test_constructor_validates_its_arguments():
     with pytest.raises(ValueError, match="max_attempts"):
         EvenKeelMiddleware(max_attempts=0)
     with pytest.raises(ValueError, match="budget_usd"):
-        from langchain_evenkeel.budget import ModelPrice, PriceTable
+        from evenkeel.budget import ModelPrice, PriceTable
 
         EvenKeelMiddleware(budget_usd=0, prices=PriceTable({"m": ModelPrice(1, 1)}))

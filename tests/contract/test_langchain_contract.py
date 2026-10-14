@@ -1,4 +1,4 @@
-"""LangChain and LangGraph behaviour langchain-evenkeel relies on. A failure here after an upgrade means the
+"""LangChain and LangGraph behaviour evenkeel relies on. A failure here after an upgrade means the
 middleware must change before it supports that version."""
 
 import operator
@@ -11,7 +11,7 @@ from langgraph.checkpoint.memory import InMemorySaver
 from langgraph.errors import GraphInterrupt
 from typing_extensions import NotRequired
 
-from langchain_evenkeel._compat import (
+from evenkeel._compat import (
     AgentMiddleware,
     AgentState,
     Command,

@@ -19,9 +19,9 @@ jobs:
           cache: pip
       - name: Check the tag matches the package version
         run: |
-          VERSION=$(python -c "import re; print(re.search(r'__version__ = \"(.+?)\"', open('langchain_evenkeel/__init__.py').read()).group(1))")
+          VERSION=$(python -c "import re; print(re.search(r'__version__ = \"(.+?)\"', open('evenkeel/__init__.py').read()).group(1))")
           if [ "${GITHUB_REF_NAME}" != "v${VERSION}" ]; then
-            echo "::error::Tag ${GITHUB_REF_NAME} does not match langchain_evenkeel/__init__.py version ${VERSION}"
+            echo "::error::Tag ${GITHUB_REF_NAME} does not match evenkeel/__init__.py version ${VERSION}"
             exit 1
           fi
       - name: Check the CHANGELOG has an entry for this version
@@ -46,7 +46,7 @@ jobs:
     runs-on: ubuntu-latest
     environment:
       name: pypi
-      url: https://pypi.org/project/langchain-evenkeel/
+      url: https://pypi.org/project/evenkeel/
     permissions:
       id-token: write
     steps:
@@ -74,4 +74,4 @@ jobs:
         run: |
           VERSION="${GITHUB_REF_NAME#v}"
           awk -v v="$VERSION" '$0 ~ "^## \\[" v "\\]" {f=1; next} /^## \[/ {f=0} f' CHANGELOG.md > notes.md
-          gh release create "$GITHUB_REF_NAME" dist/* --title "langchain-evenkeel $VERSION" --notes-file notes.md
+          gh release create "$GITHUB_REF_NAME" dist/* --title "evenkeel $VERSION" --notes-file notes.md
