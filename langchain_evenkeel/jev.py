@@ -131,7 +131,12 @@ class JevClassifier:
         if by_rules.confidence >= 1:
             return by_rules
         if self._client is None:
-            return asyncio.run(self.aclassify(ctx))
+            try:
+                asyncio.get_running_loop()
+            except RuntimeError:
+                return asyncio.run(self.aclassify(ctx))
+            # Sync code inside a running event loop (a notebook, an async server) cannot await Jev here.
+            return replace(by_rules, source="rules (no sync jev client)")
         try:
             response = self._client.system_one(
                 state=describe_failure(ctx), questions={"failure_kind": _question()}, **self._extra

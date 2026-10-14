@@ -83,9 +83,7 @@ _VALIDATION_NAMES = frozenset({"ValidationError"})
 _TRANSIENT_CODES = frozenset(
     {"ETIMEDOUT", "ECONNRESET", "ECONNREFUSED", "EPIPE", "EAI_AGAIN", "UND_ERR_SOCKET"}
 )
-_TRANSIENT_ERRNOS = frozenset(
-    {_errno.ETIMEDOUT, _errno.ECONNRESET, _errno.ECONNREFUSED, _errno.EPIPE, _socket.EAI_AGAIN}
-)
+_TRANSIENT_ERRNOS = frozenset({_errno.ETIMEDOUT, _errno.ECONNRESET, _errno.ECONNREFUSED, _errno.EPIPE})
 
 
 def error_message(error: BaseException) -> str:
@@ -105,6 +103,9 @@ def _is_network_error(error: BaseException) -> bool:
     if isinstance(error, (TimeoutError, ConnectionError)) or type(error).__name__ in _TRANSIENT_NAMES:
         return True
     code, number = getattr(error, "code", None), getattr(error, "errno", None)
+    if isinstance(error, _socket.gaierror):
+        # Only DNS errors use EAI_* numbers; on macOS EAI_AGAIN equals errno.ENOENT (a missing file).
+        return number == _socket.EAI_AGAIN
     return (isinstance(code, str) and code in _TRANSIENT_CODES) or number in _TRANSIENT_ERRNOS
 
 

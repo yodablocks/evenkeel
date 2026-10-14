@@ -6,6 +6,7 @@ import asyncio
 import operator
 import time
 from collections.abc import Awaitable, Callable
+from dataclasses import replace
 from typing import Annotated, Any
 
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
@@ -56,9 +57,21 @@ class EvenKeelState(AgentState):
 class _RetryRequest:
     """Internal signal from the decision helpers: try the call again with this request."""
 
-    def __init__(self, request: Any, delay_s: float = 0.0) -> None:
+    def __init__(self, request: Any, delay_s: float = 0.0, *, escalated: bool = False) -> None:
         self.request = request
         self.delay_s = delay_s
+        self.escalated = escalated
+
+
+def _ask(payload: dict[str, Any], parse: Callable[[Any], Any]) -> Any:
+    """Pause for a person and parse the answer. A malformed answer asks again with the error instead of
+    raising: LangGraph keeps a resume value once given, so raising would replay it on every later resume."""
+    while True:
+        answer = interrupt(payload)
+        try:
+            return parse(answer)
+        except ValueError as error:
+            payload = {**payload, "error": str(error)}
 
 
 def _with_hint(request: ModelRequest, hint: str) -> ModelRequest:
@@ -101,6 +114,22 @@ class EvenKeelMiddleware(AgentMiddleware):
 
     # Shared helpers
 
+    def _classify(self, ctx: FailureContext) -> FailureVerdict:
+        try:
+            return self._classifier.classify(ctx)
+        except GraphBubbleUp:
+            raise
+        except Exception:  # a broken classifier must never hide the user's own error
+            return replace(RuleClassifier().classify(ctx), source="rules (classifier error)")
+
+    async def _aclassify(self, ctx: FailureContext) -> FailureVerdict:
+        try:
+            return await self._classifier.aclassify(ctx)
+        except GraphBubbleUp:
+            raise
+        except Exception:
+            return replace(RuleClassifier().classify(ctx), source="rules (classifier error)")
+
     def _context(
         self, error: BaseException, *, step: str, attempt: int, payload: Any = None
     ) -> FailureContext:
@@ -122,19 +151,23 @@ class EvenKeelMiddleware(AgentMiddleware):
         verdict: FailureVerdict,
         decision: Decision,
         records: list[AttemptRecord],
+        escalated: bool,
     ) -> _RetryRequest:
-        """Turns a decision into the next request, or raises the original error."""
+        """Turns a decision into the next request, or raises the original error. A call that still needs a
+        person after one approved retry fails, so LangGraph's replay on resume cannot loop forever."""
         action = decision.action
         if isinstance(action, Retry):
-            return _RetryRequest(current, action.delay_s)
+            return _RetryRequest(current, action.delay_s, escalated=escalated)
         if isinstance(action, RetryWithHint):
-            return _RetryRequest(_with_hint(original, action.hint))
-        if isinstance(action, Escalate):
-            resume = parse_resume(
-                interrupt(escalation_payload(ctx, verdict, action.reason)), call_type="model"
+            return _RetryRequest(_with_hint(original, action.hint), escalated=escalated)
+        if isinstance(action, Escalate) and not escalated:
+            resume = _ask(
+                escalation_payload(ctx, verdict, action.reason),
+                lambda answer: parse_resume(answer, call_type="model"),
             )
             if resume.decision == "retry":
-                return _RetryRequest(_with_hint(original, resume.hint) if resume.hint else original)
+                request = _with_hint(original, resume.hint) if resume.hint else original
+                return _RetryRequest(request, escalated=True)
         attach_attempts(ctx.error, records)
         raise ctx.error
 
@@ -152,6 +185,7 @@ class EvenKeelMiddleware(AgentMiddleware):
         records: list[AttemptRecord] = []
         current = request
         attempt = 0
+        escalated = False
         while True:
             attempt += 1
             try:
@@ -160,10 +194,11 @@ class EvenKeelMiddleware(AgentMiddleware):
                 raise
             except Exception as error:
                 ctx = self._context(error, step="model", attempt=attempt)
-                verdict = self._classifier.classify(ctx)
+                verdict = self._classify(ctx)
                 decision = decide(ctx, verdict, self._policy)
                 records.append(decision.record)
-                nxt = self._model_next(request, current, ctx, verdict, decision, records)
+                nxt = self._model_next(request, current, ctx, verdict, decision, records, escalated)
+                escalated = nxt.escalated
                 if nxt.delay_s:
                     self._sleep(nxt.delay_s)
                 current = nxt.request
@@ -176,6 +211,7 @@ class EvenKeelMiddleware(AgentMiddleware):
         records: list[AttemptRecord] = []
         current = request
         attempt = 0
+        escalated = False
         while True:
             attempt += 1
             try:
@@ -184,10 +220,11 @@ class EvenKeelMiddleware(AgentMiddleware):
                 raise
             except Exception as error:
                 ctx = self._context(error, step="model", attempt=attempt)
-                verdict = await self._classifier.aclassify(ctx)
+                verdict = await self._aclassify(ctx)
                 decision = decide(ctx, verdict, self._policy)
                 records.append(decision.record)
-                nxt = self._model_next(request, current, ctx, verdict, decision, records)
+                nxt = self._model_next(request, current, ctx, verdict, decision, records, escalated)
+                escalated = nxt.escalated
                 if nxt.delay_s:
                     await self._asleep(nxt.delay_s)
                 current = nxt.request
@@ -203,6 +240,7 @@ class EvenKeelMiddleware(AgentMiddleware):
         verdict: FailureVerdict,
         decision: Decision,
         records: list[AttemptRecord],
+        escalated: bool,
     ) -> _RetryRequest | Command:
         """Retry the tool, hand the error back to the model, or raise the original error."""
         call = request.tool_call
@@ -214,19 +252,23 @@ class EvenKeelMiddleware(AgentMiddleware):
             return Command(update={"messages": [message], "evenkeel_attempts": records})
 
         if isinstance(action, Retry):
-            return _RetryRequest(request, action.delay_s)
+            return _RetryRequest(request, action.delay_s, escalated=escalated)
         if isinstance(action, RetryWithHint):
             return back_to_model(f"Error: {error_message(ctx.error)}. {action.hint}")
         if verdict.kind == "bad_input":
             return back_to_model(
                 f"Error: {error_message(ctx.error)}. Fix the arguments and call the tool again."
             )
-        if isinstance(action, Escalate):
-            resume = parse_resume(
-                interrupt(escalation_payload(ctx, verdict, action.reason)), call_type="tool"
+        if isinstance(action, Escalate) and not escalated:
+            resume = _ask(
+                escalation_payload(ctx, verdict, action.reason),
+                lambda answer: parse_resume(answer, call_type="tool"),
             )
+            if resume.decision == "retry" and resume.hint:
+                # A tool cannot take a hint, so the reviewer's words go to the model, which can call again.
+                return back_to_model(f"Error: {error_message(ctx.error)}. A reviewer said: {resume.hint}")
             if resume.decision == "retry":
-                return _RetryRequest(request)
+                return _RetryRequest(request, escalated=True)
             if resume.decision == "skip":
                 records[-1] = {**records[-1], "action": "skipped_by_reviewer"}
                 message = ToolMessage(content=resume.message, tool_call_id=call["id"], name=call["name"])
@@ -253,6 +295,7 @@ class EvenKeelMiddleware(AgentMiddleware):
     def wrap_tool_call(self, request: ToolCallRequest, handler: Callable[[ToolCallRequest], Any]) -> Any:
         records: list[AttemptRecord] = []
         attempt = 0
+        escalated = False
         while True:
             attempt += 1
             try:
@@ -266,12 +309,13 @@ class EvenKeelMiddleware(AgentMiddleware):
                     attempt=attempt,
                     payload=request.tool_call.get("args"),
                 )
-                verdict = self._classifier.classify(ctx)
+                verdict = self._classify(ctx)
                 decision = decide(ctx, verdict, self._policy)
                 records.append(decision.record)
-                nxt = self._tool_next(request, ctx, verdict, decision, records)
+                nxt = self._tool_next(request, ctx, verdict, decision, records, escalated)
                 if isinstance(nxt, Command):
                     return nxt
+                escalated = nxt.escalated
                 if nxt.delay_s:
                     self._sleep(nxt.delay_s)
                 continue
@@ -282,6 +326,7 @@ class EvenKeelMiddleware(AgentMiddleware):
     ) -> Any:
         records: list[AttemptRecord] = []
         attempt = 0
+        escalated = False
         while True:
             attempt += 1
             try:
@@ -295,12 +340,13 @@ class EvenKeelMiddleware(AgentMiddleware):
                     attempt=attempt,
                     payload=request.tool_call.get("args"),
                 )
-                verdict = await self._classifier.aclassify(ctx)
+                verdict = await self._aclassify(ctx)
                 decision = decide(ctx, verdict, self._policy)
                 records.append(decision.record)
-                nxt = self._tool_next(request, ctx, verdict, decision, records)
+                nxt = self._tool_next(request, ctx, verdict, decision, records, escalated)
                 if isinstance(nxt, Command):
                     return nxt
+                escalated = nxt.escalated
                 if nxt.delay_s:
                     await self._asleep(nxt.delay_s)
                 continue
@@ -308,11 +354,21 @@ class EvenKeelMiddleware(AgentMiddleware):
 
     # Budget
 
+    def before_agent(self, state: EvenKeelState, runtime: Any) -> dict[str, Any] | None:
+        """Each run starts with zero spend and the configured budget; state persists per thread."""
+        if self._prices is None:
+            return None
+        reset: dict[str, Any] = {"evenkeel_spent_usd": 0.0}
+        if self._budget_usd is not None:
+            reset["evenkeel_budget_usd"] = self._budget_usd
+        return reset
+
     def after_model(self, state: EvenKeelState, runtime: Any) -> dict[str, Any] | None:
         if self._prices is None:
             return None
-        message = state["messages"][-1]
-        if not isinstance(message, AIMessage):
+        # The model's reply is the newest AIMessage; structured output can put a ToolMessage after it.
+        message = next((m for m in reversed(state["messages"]) if isinstance(m, AIMessage)), None)
+        if message is None:
             return None
         spent = state.get("evenkeel_spent_usd", 0.0) + self._prices.cost_usd(message)
         return {"evenkeel_spent_usd": spent}
@@ -325,15 +381,15 @@ class EvenKeelMiddleware(AgentMiddleware):
         spent = state.get("evenkeel_spent_usd", 0.0)
         if spent < budget:
             return None
-        answer = interrupt(
+        new_budget = _ask(
             {
                 "type": "evenkeel_budget",
                 "spent_usd": round(spent, 6),
                 "budget_usd": budget,
                 "accepted": [{"approve": True, "budget_usd": "<more than spent_usd>"}, {"approve": False}],
-            }
+            },
+            lambda answer: parse_budget_resume(answer, spent_usd=spent),
         )
-        new_budget = parse_budget_resume(answer, spent_usd=spent)
         if new_budget is not None:
             return {"evenkeel_budget_usd": new_budget}
         note = AIMessage(

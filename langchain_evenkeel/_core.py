@@ -9,6 +9,7 @@ from typing import Any, Literal
 from typing_extensions import TypedDict
 
 from .failure import (
+    Escalate,
     Fail,
     FailureAction,
     FailureContext,
@@ -41,7 +42,7 @@ class Decision:
 
 def decide(ctx: FailureContext, verdict: FailureVerdict, policy: FailurePolicy) -> Decision:
     action = policy(verdict, ctx)
-    if isinstance(action, (Retry, RetryWithHint)) and ctx.attempt >= ctx.max_attempts:
+    if isinstance(action, (Retry, RetryWithHint, Escalate)) and ctx.attempt >= ctx.max_attempts:
         action = Fail(reason=f"attempt limit reached ({ctx.max_attempts}): {error_message(ctx.error)}")
     record = AttemptRecord(
         attempt=ctx.attempt,

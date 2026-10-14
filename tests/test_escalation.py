@@ -61,10 +61,11 @@ def test_skip_on_a_tool_returns_the_reviewers_message():
     assert result["messages"][-1].content == "done"
 
 
-def test_a_malformed_resume_value_is_a_clear_error():
+def test_a_malformed_resume_value_pauses_again_with_a_clear_error():
+    # Raising would poison the thread: LangGraph replays a stored resume value on every later resume.
     model = ScriptedChatModel(script=[NeedsHumanError("x"), NeedsHumanError("x")])
     agent = create_agent(model, middleware=[EvenKeelMiddleware()], checkpointer=InMemorySaver())
     config = {"configurable": {"thread_id": "esc-bad"}}
     agent.invoke(start(), config)
-    with pytest.raises(ValueError, match="decision"):
-        agent.invoke(Command(resume="yes"), config)
+    again = agent.invoke(Command(resume="yes"), config)
+    assert "decision" in again["__interrupt__"][0].value["error"]
