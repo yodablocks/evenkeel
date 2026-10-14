@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from collections.abc import Mapping
 from dataclasses import dataclass
 
@@ -30,8 +31,15 @@ def model_name_of(message: AIMessage) -> str | None:
     return name if isinstance(name, str) else None
 
 
+# What may follow a priced name: only a date or version number (-2024-07-18, -20241022, -0613, -001) or the
+# -latest alias. Anything else (-5-sonnet, -turbo, -1106-preview) is a different model with its own price.
+_VERSION_SUFFIX = re.compile(r"-(\d{4}-\d{2}-\d{2}|\d{3,8}|latest)")
+
+
 class PriceTable:
-    """Prices per model name. A dated name such as gpt-4o-mini-2024-07-18 uses the longest matching key."""
+    """Prices per model name. A name with a version or date suffix uses its base price
+    (gpt-4o-mini-2024-07-18 -> gpt-4o-mini); a different model never borrows another's price
+    (gpt-4o-mini does not use gpt-4, and gpt-4-turbo does not use gpt-4)."""
 
     def __init__(self, prices: Mapping[str, ModelPrice]) -> None:
         self._prices = dict(prices)
@@ -39,7 +47,11 @@ class PriceTable:
     def price_for(self, model_name: str) -> ModelPrice:
         if model_name in self._prices:
             return self._prices[model_name]
-        matches = [key for key in self._prices if model_name.startswith(key)]
+        matches = [
+            key
+            for key in self._prices
+            if model_name.startswith(key) and _VERSION_SUFFIX.fullmatch(model_name[len(key) :])
+        ]
         if not matches:
             raise UnknownModelPriceError(
                 f"No price for model {model_name!r}. Add it to PriceTable; known: {sorted(self._prices)}"
