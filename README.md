@@ -108,9 +108,25 @@ budget.
   LangGraph re-runs the paused node. For a tool with side effects, make it idempotent or use `skip`.
 - **Classification is only as good as the classifier.** Rules only recognise explicit signals (status codes,
   network errors, evenkeel's error classes): on keel's 75 error messages from public SDK issues they pick the
-  right kind 29 times and the right action 39 times. Jev reads the message itself; see
-  [keel's results](https://github.com/yodablocks/keel#failure-classification-rules-vs-jev) for its accuracy on
-  real error messages, and `evals/` to measure it here.
+  right kind 29 times and the right action 39 times. With Jev the results are below.
+
+## Classifier accuracy
+
+Measured with `evals/jev_eval.py` on keel's labelled error sets: 75 error messages from public SDK issues and
+60 sampled from 13 other repositories. Jev pinned to `jev-1.13.0`, one run on 2026-10-14. "Right action" counts
+a verdict as right when the default policy does the same thing as for the label (`bad_input` and `fatal` both
+fail).
+
+| Classifier | Public set, right kind | Public set, right action | Fresh set, right kind | Fresh set, right action |
+|---|---|---|---|---|
+| Rules only | 29 / 75 (39%) | 39 / 75 (52%) | 43 / 60 (72%) | 48 / 60 (80%) |
+| `JevClassifier` (rules for explicit signals, Jev for the rest, rules below 0.5 confidence) | 50 / 75 (67%) | 63 / 75 (84%) | 49 / 60 (82%) | 56 / 60 (93%) |
+
+Caveats: the labels are one person's (keel's author, who also wrote the classifier prompt), most messages come
+from development rather than production, and Jev's answers vary by about one case between runs. On the public
+set Jev answered 66 cases and the rules 9 (Jev below 0.5 confidence), of which 7 were wrong. keel's TypeScript
+cascade scored 46 to 47 and 59 to 60 on the same set ([its results](https://github.com/yodablocks/keel#failure-classification-rules-vs-jev));
+the difference is in how often Jev falls below the confidence floor, and its cause has not been established.
 
 ## Develop
 
