@@ -6,6 +6,7 @@ __pycache__/
 dist/
 evals/results/
 .DS_Store
+.env
 
 # Working documents: specs, plans and notes stay on this machine
 docs/
