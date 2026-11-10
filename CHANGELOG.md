@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.1] - 2026-11-10
+
 ### Added
 - `EvenKeelWarning`: with `check_before_call=True`, a call evenkeel can't estimate (no output cap, no model
   name, no price) now warns once per reason instead of running unchecked in silence.
@@ -55,7 +57,8 @@ First release.
 - `RuleClassifier` and `JevClassifier` (optional `jev` extra), ported from keel.
 - Contract tests for the LangChain, LangGraph and typesafe-sdk behaviour the middleware relies on.
 
-[Unreleased]: https://github.com/yodablocks/evenkeel/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/yodablocks/evenkeel/compare/v0.2.1...HEAD
+[0.2.1]: https://github.com/yodablocks/evenkeel/releases/tag/v0.2.1
 [0.2.0]: https://github.com/yodablocks/evenkeel/releases/tag/v0.2.0
 [0.1.1]: https://github.com/yodablocks/evenkeel/releases/tag/v0.1.1
 [0.1.0]: https://github.com/yodablocks/evenkeel/releases/tag/v0.1.0
