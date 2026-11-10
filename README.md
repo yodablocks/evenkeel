@@ -54,7 +54,8 @@ EvenKeelMiddleware(classifier=JevClassifier(TypeSafeClient()))
 
 ## Demo
 
-`uv run python examples/demo.py` runs one refund-support agent through every kind of failure evenkeel handles.
+From a clone of the repo, `uv run python examples/demo.py` runs one refund-support agent through every kind of
+failure evenkeel handles.
 It's offline: the model is scripted and the tools fail on cue, so no API key is needed. In one conversation:
 
 1. **Rate limit.** The model API answers 429. evenkeel backs off and retries the same call.
