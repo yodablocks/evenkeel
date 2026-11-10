@@ -69,3 +69,32 @@ jobs:
           python -m venv /tmp/venv
           /tmp/venv/bin/pip install dist/*.whl
           /tmp/venv/bin/python -c "import evenkeel as k; print(k.__version__)"
+      # Hand dist/ to the next job the same way release.yml hands it to the PyPI publish job, so the artifact
+      # actions are tested on every PR, not only when a release tag is pushed.
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: dist
+          path: dist/
+          retention-days: 1
+
+  artifact:
+    name: Download the built package
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.12"
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: dist
+          path: dist/
+      - name: Check dist/ holds one wheel and one sdist, and the wheel installs
+        run: |
+          ls -l dist/
+          test "$(ls dist/*.whl | wc -l)" -eq 1
+          test "$(ls dist/*.tar.gz | wc -l)" -eq 1
+          test "$(ls dist/ | wc -l)" -eq 2
+          python -m venv /tmp/venv
+          /tmp/venv/bin/pip install dist/*.whl
+          /tmp/venv/bin/python -c "import evenkeel as k; print(k.__version__)"
