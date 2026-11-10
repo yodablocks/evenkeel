@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+import json
 import re
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
+from typing import Any
 
-from langchain_core.messages import AIMessage
+from langchain_core.messages import AIMessage, BaseMessage
 
 
 class UnknownModelPriceError(ValueError):
@@ -72,3 +74,62 @@ class PriceTable:
         return (
             usage["input_tokens"] * price.input_per_mtok + usage["output_tokens"] * price.output_per_mtok
         ) / 1e6
+
+
+# Estimating a call before it runs (check_before_call=True). An estimate, not a bound: providers add tokens
+# for tool formatting, and middleware can change the model, prompt or tools between calls.
+
+_MESSAGE_OVERHEAD_TOKENS = 10
+"""Tokens assumed per message for roles and separators."""
+
+
+def _text_bytes(value: Any) -> int:
+    return len(json.dumps(value, ensure_ascii=False, default=str).encode())
+
+
+def _message_bytes(message: BaseMessage) -> int:
+    size = _text_bytes(message.content)
+    if isinstance(message, AIMessage) and message.tool_calls:
+        size += _text_bytes(message.tool_calls)
+    return size
+
+
+def estimate_input_tokens(messages: Sequence[BaseMessage], *, fixed_bytes: int = 0) -> int:
+    """Input tokens of the next call. From the newest reply that reported usage: its input and output tokens,
+    plus the messages after it. Before any usage: every message, plus `fixed_bytes` (system prompt and tool
+    schemas, which later replies' input tokens already include). Text is counted at one token per UTF-8 byte,
+    which overcounts: tokens usually span several bytes."""
+    start, tokens = 0, fixed_bytes
+    for index in range(len(messages) - 1, -1, -1):
+        message = messages[index]
+        usage = message.usage_metadata if isinstance(message, AIMessage) else None
+        if usage:
+            start, tokens = index + 1, usage["input_tokens"] + usage["output_tokens"]
+            break
+    return tokens + sum(_message_bytes(m) + _MESSAGE_OVERHEAD_TOKENS for m in messages[start:])
+
+
+_OUTPUT_CAP_FIELDS = ("max_tokens", "max_completion_tokens", "max_output_tokens")
+
+
+def _positive_int(value: Any) -> int | None:
+    return value if isinstance(value, int) and not isinstance(value, bool) and value > 0 else None
+
+
+def max_output_tokens(model: Any, settings: Mapping[str, Any]) -> int | None:
+    """The call's output cap: from the call's settings, then from the model. None when nothing caps it."""
+    for source in (settings, model.__dict__ if hasattr(model, "__dict__") else {}):
+        for name in _OUTPUT_CAP_FIELDS:
+            cap = _positive_int(source.get(name))
+            if cap is not None:
+                return cap
+    return None
+
+
+def chat_model_name(model: Any) -> str | None:
+    """The model a chat model will call (ChatOpenAI.model_name, ChatAnthropic.model)."""
+    for attr in ("model_name", "model"):
+        name = getattr(model, attr, None)
+        if isinstance(name, str) and name:
+            return name
+    return None
