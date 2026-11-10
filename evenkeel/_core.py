@@ -104,17 +104,23 @@ def parse_resume(value: Any, *, call_type: Literal["model", "tool"]) -> Resume:
 _BUDGET_HELP = 'Resume with {"approve": true, "budget_usd": <more than spent>} or {"approve": false}'
 
 
-def parse_budget_resume(value: Any, *, spent_usd: float) -> float | None:
+def parse_budget_resume(value: Any, *, spent_usd: float, next_call_usd: float = 0.0) -> float | None:
+    """`next_call_usd`: the estimated most the next call can cost, which the new budget must also cover."""
     if not isinstance(value, dict) or not isinstance(value.get("approve"), bool):
         raise ValueError(f"Unrecognised budget decision {value!r}. {_BUDGET_HELP}")
     if not value["approve"]:
         return None
     budget = value.get("budget_usd")
-    if not isinstance(budget, (int, float)) or isinstance(budget, bool) or budget <= spent_usd:
-        raise ValueError(
-            f"An approval needs a budget_usd above the ${spent_usd:.4f} already spent, "
-            f"got {budget!r}. {_BUDGET_HELP}"
-        )
+    needed = spent_usd + next_call_usd
+    if not isinstance(budget, (int, float)) or isinstance(budget, bool) or budget <= needed:
+        if next_call_usd:
+            reason = (
+                f"above ${needed:.4f}: ${spent_usd:.4f} already spent plus up to ${next_call_usd:.4f} "
+                "for the next call"
+            )
+        else:
+            reason = f"above the ${spent_usd:.4f} already spent"
+        raise ValueError(f"An approval needs a budget_usd {reason}, got {budget!r}. {_BUDGET_HELP}")
     return float(budget)
 
 

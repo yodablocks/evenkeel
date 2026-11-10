@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import operator
 import time
 from collections.abc import Awaitable, Callable
@@ -10,6 +11,7 @@ from dataclasses import replace
 from typing import Annotated, Any, NotRequired
 
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
+from langchain_core.utils.function_calling import convert_to_openai_tool
 
 from ._compat import (
     AgentMiddleware,
@@ -32,7 +34,13 @@ from ._core import (
     parse_budget_resume,
     parse_resume,
 )
-from .budget import PriceTable
+from .budget import (
+    PriceTable,
+    UnknownModelPriceError,
+    chat_model_name,
+    estimate_input_tokens,
+    max_output_tokens,
+)
 from .failure import (
     Classifier,
     Escalate,
@@ -77,6 +85,28 @@ def _with_hint(request: ModelRequest, hint: str) -> ModelRequest:
     return request.override(messages=[*request.messages, HumanMessage(f"[evenkeel] {hint}")])
 
 
+# Marks evenkeel's own messages, which no model produced, so spend tracking skips them.
+_EVENKEEL_NOTE = {"evenkeel_note": True}
+
+
+def _stop_note(spent: float, budget: float) -> AIMessage:
+    return AIMessage(
+        f"Stopped by evenkeel: spent ${spent:.4f} of a ${budget:.4f} budget and the increase was declined.",
+        response_metadata=dict(_EVENKEEL_NOTE),
+    )
+
+
+def _fixed_bytes(request: ModelRequest) -> int:
+    """System prompt and tool schemas: part of every call's input, but not of the message list."""
+    size = len(str(request.system_message.content).encode()) if request.system_message else 0
+    for tool in request.tools or []:
+        try:
+            size += len(json.dumps(convert_to_openai_tool(tool), default=str).encode())
+        except Exception:  # an unusual tool definition only makes the estimate lower
+            continue
+    return size
+
+
 class EvenKeelMiddleware(AgentMiddleware):
     """Classifies each failed model or tool call and acts on it: back off, retry with a hint, fail, or
     escalate to a person. Optionally tracks spend in dollars and pauses the run when over budget."""
@@ -91,6 +121,7 @@ class EvenKeelMiddleware(AgentMiddleware):
         max_attempts: int = 4,
         budget_usd: float | None = None,
         prices: PriceTable | None = None,
+        check_before_call: bool = False,
         task: str = "agent",
         sleep: Callable[[float], None] = time.sleep,
         asleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
@@ -102,11 +133,14 @@ class EvenKeelMiddleware(AgentMiddleware):
             raise ValueError("budget_usd needs prices=PriceTable({...}) to turn tokens into dollars")
         if budget_usd is not None and budget_usd <= 0:
             raise ValueError("budget_usd must be above 0")
+        if check_before_call and budget_usd is None:
+            raise ValueError("check_before_call needs budget_usd: there is no budget to check against")
         self._classifier = classifier or RuleClassifier()
         self._policy = policy or default_policy()
         self._max_attempts = max_attempts
         self._budget_usd = budget_usd
         self._prices = prices
+        self._check_before_call = check_before_call
         self._task = task
         self._sleep = sleep
         self._asleep = asleep
@@ -171,16 +205,74 @@ class EvenKeelMiddleware(AgentMiddleware):
         raise ctx.error
 
     @staticmethod
-    def _model_result(response: ModelResponse, records: list[AttemptRecord]) -> Any:
-        if not records:
+    def _model_result(
+        response: ModelResponse, records: list[AttemptRecord], new_budget: float | None = None
+    ) -> Any:
+        update: dict[str, Any] = {}
+        if records:
+            update["evenkeel_attempts"] = records
+        if new_budget is not None:
+            update["evenkeel_budget_usd"] = new_budget
+        if not update:
             return response
-        return ExtendedModelResponse(
-            model_response=response, command=Command(update={"evenkeel_attempts": records})
+        return ExtendedModelResponse(model_response=response, command=Command(update=update))
+
+    def _next_call_max_usd(self, request: ModelRequest) -> float | None:
+        """The estimated most the call can cost, or None when it cannot be estimated: no output cap, no
+        model name, or no price for that name. Uses only the request and state, so a replay reaches the
+        same result."""
+        if self._prices is None:
+            return None
+        cap = max_output_tokens(request.model, request.model_settings or {})
+        name = chat_model_name(request.model)
+        if cap is None or name is None:
+            return None
+        try:
+            price = self._prices.price_for(name)
+        except UnknownModelPriceError:
+            return None
+        tokens_in = estimate_input_tokens(request.messages, fixed_bytes=_fixed_bytes(request))
+        return (tokens_in * price.input_per_mtok + cap * price.output_per_mtok) / 1e6
+
+    def _check_budget_before_call(self, request: ModelRequest) -> tuple[bool, float | None]:
+        """With check_before_call: pause when the call's estimated maximum would cross the budget.
+        Returns (go ahead, the budget a reviewer approved, if any)."""
+        if not self._check_before_call:
+            return True, None
+        state = request.state or {}
+        budget = state.get("evenkeel_budget_usd", self._budget_usd)
+        next_max = self._next_call_max_usd(request)
+        if budget is None or next_max is None:
+            return True, None
+        spent = state.get("evenkeel_spent_usd", 0.0)
+        if spent + next_max <= budget:
+            return True, None
+        new_budget = _ask(
+            {
+                "type": "evenkeel_budget",
+                "spent_usd": round(spent, 6),
+                "budget_usd": budget,
+                "next_call_max_usd": round(next_max, 6),
+                "accepted": [
+                    {"approve": True, "budget_usd": "<more than spent_usd + next_call_max_usd>"},
+                    {"approve": False},
+                ],
+            },
+            lambda answer: parse_budget_resume(answer, spent_usd=spent, next_call_usd=next_max),
         )
+        return new_budget is not None, new_budget
+
+    def _declined(self, request: ModelRequest) -> ModelResponse:
+        state = request.state or {}
+        budget = state.get("evenkeel_budget_usd", self._budget_usd)
+        return ModelResponse(result=[_stop_note(state.get("evenkeel_spent_usd", 0.0), budget)])
 
     # Model calls
 
     def wrap_model_call(self, request: ModelRequest, handler: Callable[[ModelRequest], ModelResponse]) -> Any:
+        go_ahead, new_budget = self._check_budget_before_call(request)
+        if not go_ahead:
+            return self._declined(request)
         records: list[AttemptRecord] = []
         current = request
         attempt = 0
@@ -202,11 +294,14 @@ class EvenKeelMiddleware(AgentMiddleware):
                     self._sleep(nxt.delay_s)
                 current = nxt.request
                 continue
-            return self._model_result(response, records)
+            return self._model_result(response, records, new_budget)
 
     async def awrap_model_call(
         self, request: ModelRequest, handler: Callable[[ModelRequest], Awaitable[ModelResponse]]
     ) -> Any:
+        go_ahead, new_budget = self._check_budget_before_call(request)
+        if not go_ahead:
+            return self._declined(request)
         records: list[AttemptRecord] = []
         current = request
         attempt = 0
@@ -228,7 +323,7 @@ class EvenKeelMiddleware(AgentMiddleware):
                     await self._asleep(nxt.delay_s)
                 current = nxt.request
                 continue
-            return self._model_result(response, records)
+            return self._model_result(response, records, new_budget)
 
     # Tool calls
 
@@ -367,7 +462,7 @@ class EvenKeelMiddleware(AgentMiddleware):
             return None
         # The model's reply is the newest AIMessage; structured output can put a ToolMessage after it.
         message = next((m for m in reversed(state["messages"]) if isinstance(m, AIMessage)), None)
-        if message is None:
+        if message is None or (message.response_metadata or {}).get("evenkeel_note"):
             return None
         spent = state.get("evenkeel_spent_usd", 0.0) + self._prices.cost_usd(message)
         return {"evenkeel_spent_usd": spent}
@@ -391,8 +486,4 @@ class EvenKeelMiddleware(AgentMiddleware):
         )
         if new_budget is not None:
             return {"evenkeel_budget_usd": new_budget}
-        note = AIMessage(
-            f"Stopped by evenkeel: spent ${spent:.4f} of a ${budget:.4f} budget "
-            "and the increase was declined."
-        )
-        return {"messages": [note], "jump_to": "end"}
+        return {"messages": [_stop_note(spent, budget)], "jump_to": "end"}

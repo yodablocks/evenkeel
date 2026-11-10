@@ -16,6 +16,7 @@ from evenkeel._compat import (
     Command,
     ExtendedModelResponse,
     GraphBubbleUp,
+    ModelResponse,
     hook_config,
     interrupt,
 )
@@ -125,3 +126,42 @@ def test_wrap_hooks_can_append_to_custom_state():
     config = {"configurable": {"thread_id": "c7"}}
     agent.invoke(start(), config)
     assert sorted(agent.get_state(config).values["notes"]) == ["m", "m", "t"]
+
+
+def test_a_model_request_carries_what_the_budget_check_reads():
+    seen: dict = {}
+
+    class Look(AgentMiddleware):
+        def wrap_model_call(self, request, handler):
+            seen.update(
+                state=request.state,
+                settings=request.model_settings,
+                system=request.system_message,
+                tools=request.tools,
+                model=request.model,
+            )
+            return handler(request)
+
+    @tool
+    def ok(x: str) -> str:
+        """Succeeds."""
+        return "fine"
+
+    model = ScriptedChatModel(script=[ai("done")])
+    create_agent(model, tools=[ok], system_prompt="be brief", middleware=[Look()]).invoke(start())
+    assert "messages" in seen["state"]
+    assert isinstance(seen["settings"], dict)
+    assert seen["system"].content == "be brief"
+    assert [t.name for t in seen["tools"]] == ["ok"]
+    assert seen["model"] is model
+
+
+def test_wrap_model_call_can_answer_without_calling_the_model_and_end_the_run():
+    class Answer(AgentMiddleware):
+        def wrap_model_call(self, request, handler):
+            return ModelResponse(result=[AIMessage("stopped")])
+
+    model = ScriptedChatModel(script=[ai("never")])
+    result = create_agent(model, middleware=[Answer()]).invoke(start())
+    assert model.calls == []
+    assert result["messages"][-1].content == "stopped"

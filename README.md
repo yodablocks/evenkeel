@@ -144,10 +144,30 @@ agent.invoke(Command(resume={"approve": False}), config)  # ends the run
 The budget applies to each run: every new `invoke` on a thread starts with zero spend and the configured
 budget.
 
+### Checking a call before it runs
+
+By default the budget is checked against what has been spent, so the call that crosses it still runs. With
+`check_before_call=True`, evenkeel also estimates the most the next call can cost and pauses before it when
+that would cross the budget:
+
+```python
+EvenKeelMiddleware(budget_usd=0.50, prices=prices, check_before_call=True)
+```
+
+The estimate is the call's output cap (`max_tokens`, `max_completion_tokens` or `max_output_tokens`, from the
+call's settings or the model) at the output price, plus its input at the input price. Input is counted from
+the last reply's reported usage, plus the new messages at one token per UTF-8 byte, which overcounts. The pause
+payload adds `next_call_max_usd`, and an approval must raise the budget above `spent_usd` plus that amount.
+
+A call is not checked, and runs as before, when its model has no output cap (ChatOpenAI by default), when the
+model's name isn't readable, or when that name has no price.
+
 ## Limitations
 
 - **Budgets can overshoot by one call.** The check runs before a model call, but a call's cost is known only
-  after it. keel has the same limitation.
+  after it. keel has the same limitation. With `check_before_call=True` and an output cap on the model, the
+  overshoot is limited to the estimate's error: provider overhead for tool formatting, and other middleware
+  changing the model, prompt or tools after evenkeel has looked at the call.
 - **No built-in prices.** You supply them; a model without a price, or a response without token usage, is an
   error rather than a silent $0. Dated or versioned names (`gpt-4o-mini-2024-07-18`, `claude-3-5-sonnet-20241022`, `gpt-4-0613`, `...-latest`)
   use the price of their base name; any other variant (`gpt-4o-mini` against `gpt-4`, `gpt-4-turbo`) needs its own

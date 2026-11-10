@@ -11,6 +11,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Python 3.14 support: CI now tests it, and the package lists it.
 - An offline demo, `examples/demo.py`: one agent hits a rate limit, bad tool input, bad output, a refund that
   needs a person and an exhausted budget, with no API key. `tests/test_demo.py` checks every moment.
+- `check_before_call=True` on `EvenKeelMiddleware`: before each model call, estimate the most it can cost
+  (output cap plus input) and pause when that would cross the budget. Off by default; a call that can't be
+  estimated runs as before. The pause payload adds `next_call_max_usd`.
 
 ### Changed
 - **Requires Python 3.11 or newer.** On Python 3.10, any pause inside an async run (`ainvoke` hitting an
