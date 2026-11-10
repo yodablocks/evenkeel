@@ -1,7 +1,6 @@
 """check_before_call=True: pause before a model call whose estimated worst case would cross the budget."""
 
 import asyncio
-import sys
 
 import pytest
 from langchain.agents import create_agent
@@ -178,10 +177,6 @@ def test_an_approval_then_an_escalation_in_the_same_call_both_resume_correctly()
     assert [(r["kind"], r["action"]) for r in values["evenkeel_attempts"]] == [("needs_human", "escalate")]
 
 
-@pytest.mark.skipif(
-    sys.version_info < (3, 11),
-    reason="LangGraph's interrupt() cannot find its run inside async code before Python 3.11",
-)
 def test_the_async_path_pauses_and_resumes_the_same_way():
     async def run():
         model, agent, config = build([reply("done")], "async", budget_usd=0.005, check_before_call=True)
