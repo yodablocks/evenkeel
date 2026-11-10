@@ -2,7 +2,10 @@
 
 import importlib.util
 import sys
+import warnings
 from pathlib import Path
+
+from evenkeel import EvenKeelWarning
 
 DEMO = Path(__file__).resolve().parent.parent / "examples" / "demo.py"
 
@@ -16,7 +19,11 @@ def load_demo():
 
 
 def test_the_demo_shows_every_failure_kind_and_completes(capsys):
-    result = load_demo().main()
+    with warnings.catch_warnings():
+        # The demo must not run with check_before_call silently off. Only evenkeel's warning fails the test,
+        # so a dependency's deprecation warning can't break it.
+        warnings.simplefilter("error", EvenKeelWarning)
+        result = load_demo().main()
     log = "\n".join(result["log"])
     state = result["state"]
 
@@ -27,12 +34,16 @@ def test_the_demo_shows_every_failure_kind_and_completes(capsys):
     assert "lookup_order('A-1042') found" in log
     # 3. Bad output: the retry carried evenkeel's hint to the model.
     assert "with evenkeel's hint: [evenkeel] The previous attempt produced unusable output" in log
-    # 4. Needs a person: paused, and the reviewer's skip applied after LangGraph's replay.
+    # 4. Budget: paused before a call that could cross $0.03, while spend was still under it.
+    assert (
+        "[reviewer] paused before a call: spent $0.0210 of a $0.03 budget, "
+        "and the next call could cost up to $0.0117" in log
+    )
+    assert state["evenkeel_budget_usd"] == 0.05
+    # 5. Needs a person: paused, and the reviewer's skip applied after LangGraph's replay.
     assert "[reviewer] paused: A refund of $640 is over the $500 limit" in log
     assert "re-ran the paused call on resume. The decision applies now." in log
-    # 5. Over budget: paused at $0.0315 of $0.03, then the raised budget let the run finish.
-    assert "[reviewer] paused: spent $0.0315 of a $0.03 budget" in log
-    assert state["evenkeel_budget_usd"] == 0.05
+    assert log.index("paused before a call") < log.index("paused: A refund")
 
     assert state["messages"][-1].content.startswith("Your refund of $640 for order A-1042 is done")
     assert round(state["evenkeel_spent_usd"], 4) == 0.042  # four answered calls at $0.0105

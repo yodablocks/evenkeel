@@ -6,6 +6,7 @@ import asyncio
 import json
 import operator
 import time
+import warnings
 from collections.abc import Awaitable, Callable
 from dataclasses import replace
 from typing import Annotated, Any, NotRequired
@@ -85,6 +86,10 @@ def _with_hint(request: ModelRequest, hint: str) -> ModelRequest:
     return request.override(messages=[*request.messages, HumanMessage(f"[evenkeel] {hint}")])
 
 
+class EvenKeelWarning(UserWarning):
+    """evenkeel was asked to do something it cannot do for this run, such as check a call it cannot price."""
+
+
 # Marks evenkeel's own messages, which no model produced, so spend tracking skips them.
 _EVENKEEL_NOTE = {"evenkeel_note": True}
 
@@ -122,6 +127,7 @@ class EvenKeelMiddleware(AgentMiddleware):
         budget_usd: float | None = None,
         prices: PriceTable | None = None,
         check_before_call: bool = False,
+        assumed_max_output_tokens: int | None = None,
         task: str = "agent",
         sleep: Callable[[float], None] = time.sleep,
         asleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
@@ -135,12 +141,19 @@ class EvenKeelMiddleware(AgentMiddleware):
             raise ValueError("budget_usd must be above 0")
         if check_before_call and budget_usd is None:
             raise ValueError("check_before_call needs budget_usd: there is no budget to check against")
+        if assumed_max_output_tokens is not None:
+            if not check_before_call:
+                raise ValueError("assumed_max_output_tokens needs check_before_call=True")
+            if assumed_max_output_tokens <= 0:
+                raise ValueError("assumed_max_output_tokens must be above 0")
         self._classifier = classifier or RuleClassifier()
         self._policy = policy or default_policy()
         self._max_attempts = max_attempts
         self._budget_usd = budget_usd
         self._prices = prices
         self._check_before_call = check_before_call
+        self._assumed_max_output_tokens = assumed_max_output_tokens
+        self._warned: set[str] = set()
         self._task = task
         self._sleep = sleep
         self._asleep = asleep
@@ -217,22 +230,36 @@ class EvenKeelMiddleware(AgentMiddleware):
             return response
         return ExtendedModelResponse(model_response=response, command=Command(update=update))
 
-    def _next_call_max_usd(self, request: ModelRequest) -> float | None:
-        """The estimated most the call can cost, or None when it cannot be estimated: no output cap, no
-        model name, or no price for that name. Uses only the request and state, so a replay reaches the
-        same result."""
+    def _next_call_max_usd(self, request: ModelRequest) -> tuple[float | None, str | None]:
+        """The estimated most the call can cost, or None and the reason it cannot be estimated. Uses only
+        the request and state, so a replay reaches the same result."""
         if self._prices is None:
-            return None
+            return None, "no price table"
         cap = max_output_tokens(request.model, request.model_settings or {})
+        cap = cap or self._assumed_max_output_tokens
+        if cap is None:
+            return None, "no output cap: set max_tokens on the model or assumed_max_output_tokens on evenkeel"
         name = chat_model_name(request.model)
-        if cap is None or name is None:
-            return None
+        if name is None:
+            return None, "the model does not say which model it calls"
         try:
             price = self._prices.price_for(name)
         except UnknownModelPriceError:
-            return None
+            return None, f"no price for {name!r} in the price table"
         tokens_in = estimate_input_tokens(request.messages, fixed_bytes=_fixed_bytes(request))
-        return (tokens_in * price.input_per_mtok + cap * price.output_per_mtok) / 1e6
+        return (tokens_in * price.input_per_mtok + cap * price.output_per_mtok) / 1e6, None
+
+    def _warn_unchecked(self, reason: str) -> None:
+        """Say once per reason that check_before_call is on but cannot check, instead of running silently."""
+        if reason in self._warned:
+            return
+        self._warned.add(reason)
+        warnings.warn(
+            f"evenkeel check_before_call cannot check this model's calls ({reason}). They run unchecked, "
+            "and the budget is enforced only after each call, as without check_before_call.",
+            EvenKeelWarning,
+            stacklevel=2,
+        )
 
     def _check_budget_before_call(self, request: ModelRequest) -> tuple[bool, float | None]:
         """With check_before_call: pause when the call's estimated maximum would cross the budget.
@@ -241,7 +268,9 @@ class EvenKeelMiddleware(AgentMiddleware):
             return True, None
         state = request.state or {}
         budget = state.get("evenkeel_budget_usd", self._budget_usd)
-        next_max = self._next_call_max_usd(request)
+        next_max, reason = self._next_call_max_usd(request)
+        if reason is not None:
+            self._warn_unchecked(reason)
         if budget is None or next_max is None:
             return True, None
         spent = state.get("evenkeel_spent_usd", 0.0)

@@ -11,7 +11,7 @@ from langgraph.types import Command
 
 from evenkeel.budget import ModelPrice, PriceTable, estimate_input_tokens, max_output_tokens
 from evenkeel.failure import NeedsHumanError
-from evenkeel.middleware import EvenKeelMiddleware
+from evenkeel.middleware import EvenKeelMiddleware, EvenKeelWarning
 from tests.fakes import ScriptedChatModel, ai, tool_call
 
 # $1 per million input tokens, $10 per million output tokens.
@@ -146,7 +146,8 @@ def test_a_call_that_cannot_be_estimated_runs_as_before(model_kwargs):
     model, agent, config = build(
         [reply("done")], "no-estimate", model_kwargs=model_kwargs, budget_usd=0.005, check_before_call=True
     )
-    result = agent.invoke(go(), config)
+    with pytest.warns(EvenKeelWarning):
+        result = agent.invoke(go(), config)
     assert result["messages"][-1].content == "done"
 
 
@@ -187,3 +188,59 @@ def test_the_async_path_pauses_and_resumes_the_same_way():
         assert (await agent.aget_state(config)).values["evenkeel_budget_usd"] == 1.0
 
     asyncio.run(run())
+
+
+# A call that cannot be estimated is not silent
+
+
+@pytest.mark.parametrize(
+    ("model_kwargs", "reason"),
+    [
+        ({"max_tokens": None}, "no output cap"),
+        ({"model_name": "unpriced-model"}, "no price for 'unpriced-model'"),
+    ],
+)
+def test_a_call_that_cannot_be_estimated_warns_once(model_kwargs, reason):
+    script = [reply(tool_calls=[tool_call("search", {"q": "a"}, "c1")]), reply("done")]
+    model, agent, config = build(
+        script, f"warn-{reason}", model_kwargs=model_kwargs, budget_usd=1.0, check_before_call=True
+    )
+    with pytest.warns(EvenKeelWarning, match="check_before_call") as caught:
+        agent.invoke(go(), config)
+    messages = [str(w.message) for w in caught if issubclass(w.category, EvenKeelWarning)]
+    assert len(messages) == 1  # two calls, one warning
+    assert reason in messages[0]
+
+
+def test_an_assumed_output_cap_lets_an_uncapped_model_be_checked():
+    model, agent, config = build(
+        [reply("done")],
+        "assumed",
+        model_kwargs={"max_tokens": None},
+        budget_usd=0.005,
+        check_before_call=True,
+        assumed_max_output_tokens=1000,
+    )
+    paused = agent.invoke(go(), config)
+    assert paused["__interrupt__"][0].value["next_call_max_usd"] > 0.01
+    assert model.calls == []
+
+
+def test_the_models_own_cap_wins_over_the_assumed_one():
+    # The model's cap of 100 tokens fits in the budget; an assumed 1000 would not.
+    model, agent, config = build(
+        [reply("done")],
+        "own-cap",
+        model_kwargs={"max_tokens": 100},
+        budget_usd=0.005,
+        check_before_call=True,
+        assumed_max_output_tokens=1000,
+    )
+    assert agent.invoke(go(), config)["messages"][-1].content == "done"
+
+
+def test_the_assumed_cap_needs_check_before_call_and_must_be_positive():
+    with pytest.raises(ValueError, match="assumed_max_output_tokens needs check_before_call"):
+        EvenKeelMiddleware(prices=PRICES, budget_usd=1.0, assumed_max_output_tokens=1000)
+    with pytest.raises(ValueError, match="assumed_max_output_tokens must be above 0"):
+        EvenKeelMiddleware(prices=PRICES, budget_usd=1.0, check_before_call=True, assumed_max_output_tokens=0)

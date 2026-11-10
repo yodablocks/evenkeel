@@ -62,10 +62,10 @@ It's offline: the model is scripted and the tools fail on cue, so no API key is 
 2. **Bad tool input.** The model passes a malformed order id. The tool's error goes back to the model, which
    fixes it.
 3. **Bad output.** The model's reply is unusable. evenkeel retries with a hint saying what was wrong.
-4. **Needs a person.** A $640 refund is over the agent's $500 limit. The run pauses, and a reviewer refunds by
+4. **Budget.** With $0.021 of its $0.03 budget spent, the next call could cost up to $0.0117. evenkeel pauses
+   before making it (`check_before_call=True`), so the budget is never overshot, and the reviewer raises it.
+5. **Needs a person.** A $640 refund is over the agent's $500 limit. The run pauses, and a reviewer refunds by
    hand and skips the tool.
-5. **Over budget.** The run has spent $0.0315 of its $0.03 budget. It pauses again, and the reviewer raises the
-   budget, so the run finishes.
 
 ```
 [customer] My blender (order A-1042) arrived broken. I want a refund.
@@ -81,6 +81,7 @@ It's offline: the model is scripted and the tools fail on cue, so no API key is 
            -> bad_output (confidence 1.00), so retry with a hint
 [model] call 4, with evenkeel's hint: [evenkeel] The previous attempt produced unusable output: The reply was cut off mid-sentence and has no answer for the customer
 [tool] lookup_order('A-1042') found a $640 blender, delivered broken
+[reviewer] paused before a call: spent $0.0210 of a $0.03 budget, and the next call could cost up to $0.0117. Decision: raise it to $0.05.
 [model] call 5
 [tool] refund($640) is over the $500 limit
 [evenkeel] tool:refund failed: A refund of $640 is over the $500 limit
@@ -88,7 +89,6 @@ It's offline: the model is scripted and the tools fail on cue, so no API key is 
 [reviewer] paused: A refund of $640 is over the $500 limit. Decision: refund by hand and skip the tool.
 [tool] refund($640) is over the $500 limit
 [evenkeel] LangGraph re-ran the paused call on resume. The decision applies now.
-[reviewer] paused: spent $0.0315 of a $0.03 budget. Decision: raise it to $0.05.
 [model] call 6
 [agent] Your refund of $640 for order A-1042 is done. Sorry the blender arrived broken.
 [demo] spent $0.0420; every failure evenkeel handled:
@@ -160,7 +160,15 @@ the last reply's reported usage, plus the new messages at one token per UTF-8 by
 payload adds `next_call_max_usd`, and an approval must raise the budget above `spent_usd` plus that amount.
 
 A call is not checked, and runs as before, when its model has no output cap (ChatOpenAI by default), when the
-model's name isn't readable, or when that name has no price.
+model's name isn't readable, or when that name has no price. evenkeel then emits an `EvenKeelWarning` once
+for each reason, so the check is never off without you knowing. For a model with no cap, you can give one:
+
+```python
+EvenKeelMiddleware(budget_usd=0.50, prices=prices, check_before_call=True, assumed_max_output_tokens=4096)
+```
+
+That number is an assumption, not a limit: evenkeel doesn't pass it to the model. Prefer setting `max_tokens` on
+the model, which the provider enforces; the model's own cap always wins over the assumed one.
 
 ## Limitations
 

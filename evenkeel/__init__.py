@@ -13,7 +13,7 @@ from .failure import (
     default_policy,
 )
 from .jev import JevClassifier
-from .middleware import EvenKeelMiddleware
+from .middleware import EvenKeelMiddleware, EvenKeelWarning
 
 __version__ = "0.2.0"
 
@@ -22,6 +22,7 @@ __all__ = [
     "BadInputError",
     "BadOutputError",
     "EvenKeelMiddleware",
+    "EvenKeelWarning",
     "FailureContext",
     "FailureVerdict",
     "JevClassifier",
