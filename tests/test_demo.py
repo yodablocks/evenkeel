@@ -5,6 +5,8 @@ import sys
 import warnings
 from pathlib import Path
 
+from evenkeel import EvenKeelWarning
+
 DEMO = Path(__file__).resolve().parent.parent / "examples" / "demo.py"
 
 
@@ -18,7 +20,9 @@ def load_demo():
 
 def test_the_demo_shows_every_failure_kind_and_completes(capsys):
     with warnings.catch_warnings():
-        warnings.simplefilter("error")  # the demo must not run with check_before_call silently off
+        # The demo must not run with check_before_call silently off. Only evenkeel's warning fails the test,
+        # so a dependency's deprecation warning can't break it.
+        warnings.simplefilter("error", EvenKeelWarning)
         result = load_demo().main()
     log = "\n".join(result["log"])
     state = result["state"]
