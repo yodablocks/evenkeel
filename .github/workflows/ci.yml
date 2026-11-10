@@ -53,7 +53,7 @@ jobs:
           python-version: "3.12"
           enable-cache: true
       - run: uv sync --locked
-      - run: uv run --no-sync ruff check evenkeel tests evals
+      - run: uv run --no-sync ruff check evenkeel tests evals examples
 
   build:
     name: Build and install the wheel

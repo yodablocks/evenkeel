@@ -52,6 +52,54 @@ from evenkeel import EvenKeelMiddleware, JevClassifier
 EvenKeelMiddleware(classifier=JevClassifier(TypeSafeClient()))
 ```
 
+## Demo
+
+From a clone of the repo, `uv run python examples/demo.py` runs one refund-support agent through every kind of
+failure evenkeel handles.
+It's offline: the model is scripted and the tools fail on cue, so no API key is needed. In one conversation:
+
+1. **Rate limit.** The model API answers 429. evenkeel backs off and retries the same call.
+2. **Bad tool input.** The model passes a malformed order id. The tool's error goes back to the model, which
+   fixes it.
+3. **Bad output.** The model's reply is unusable. evenkeel retries with a hint saying what was wrong.
+4. **Needs a person.** A $640 refund is over the agent's $500 limit. The run pauses, and a reviewer refunds by
+   hand and skips the tool.
+5. **Over budget.** The run has spent $0.0315 of its $0.03 budget. It pauses again, and the reviewer raises the
+   budget, so the run finishes.
+
+```
+[customer] My blender (order A-1042) arrived broken. I want a refund.
+[model] call 1
+[evenkeel] model failed: 429 Too Many Requests: rate limit exceeded
+           -> transient (confidence 0.90), so back off 0.1s and retry
+[model] call 2
+[tool] lookup_order('1042') rejected the id
+[evenkeel] tool:lookup_order failed: Order id '1042' is malformed: ids look like A-1042
+           -> bad_input (confidence 1.00), so hand the error back to the model to fix its arguments
+[model] call 3
+[evenkeel] model failed: The reply was cut off mid-sentence and has no answer for the customer
+           -> bad_output (confidence 1.00), so retry with a hint
+[model] call 4, with evenkeel's hint: [evenkeel] The previous attempt produced unusable output: The reply was cut off mid-sentence and has no answer for the customer
+[tool] lookup_order('A-1042') found a $640 blender, delivered broken
+[model] call 5
+[tool] refund($640) is over the $500 limit
+[evenkeel] tool:refund failed: A refund of $640 is over the $500 limit
+           -> needs_human (confidence 1.00), so pause for a person
+[reviewer] paused: A refund of $640 is over the $500 limit. Decision: refund by hand and skip the tool.
+[tool] refund($640) is over the $500 limit
+[evenkeel] LangGraph re-ran the paused call on resume. The decision applies now.
+[reviewer] paused: spent $0.0315 of a $0.03 budget. Decision: raise it to $0.05.
+[model] call 6
+[agent] Your refund of $640 for order A-1042 is done. Sorry the blender arrived broken.
+[demo] spent $0.0420; every failure evenkeel handled:
+  model: RateLimitError -> transient, retry
+  tool:lookup_order: BadInputError -> bad_input, returned_to_model
+  model: BadOutputError -> bad_output, retry_modified
+  tool:refund: NeedsHumanError -> needs_human, skipped_by_reviewer
+```
+
+`tests/test_demo.py` runs it and checks every moment.
+
 ## How failures are handled
 
 | Kind | Example | Action |
