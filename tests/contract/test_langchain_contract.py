@@ -2,14 +2,13 @@
 middleware must change before it supports that version."""
 
 import operator
-from typing import Annotated
+from typing import Annotated, NotRequired
 
 from langchain.agents import create_agent
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 from langchain_core.tools import tool
 from langgraph.checkpoint.memory import InMemorySaver
 from langgraph.errors import GraphInterrupt
-from typing_extensions import NotRequired
 
 from evenkeel._compat import (
     AgentMiddleware,

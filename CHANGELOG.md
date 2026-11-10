@@ -12,6 +12,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - An offline demo, `examples/demo.py`: one agent hits a rate limit, bad tool input, bad output, a refund that
   needs a person and an exhausted budget, with no API key. `tests/test_demo.py` checks every moment.
 
+### Changed
+- **Requires Python 3.11 or newer.** On Python 3.10, any pause inside an async run (`ainvoke` hitting an
+  escalation or the budget) failed with `RuntimeError: Called get_config outside of a runnable context`:
+  before 3.11, LangGraph's `interrupt()` can't find its run inside async code. Python 3.10 reached its end of
+  life in October 2026. Tests now cover pausing and resuming in async runs.
+
 ## [0.1.1] - 2026-10-14
 
 ### Fixed
