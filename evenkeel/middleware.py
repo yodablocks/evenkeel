@@ -7,10 +7,9 @@ import operator
 import time
 from collections.abc import Awaitable, Callable
 from dataclasses import replace
-from typing import Annotated, Any
+from typing import Annotated, Any, NotRequired
 
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
-from typing_extensions import NotRequired
 
 from ._compat import (
     AgentMiddleware,

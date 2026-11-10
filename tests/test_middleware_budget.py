@@ -1,3 +1,5 @@
+import asyncio
+
 import pytest
 from langchain.agents import create_agent
 from langchain_core.messages import AIMessage, HumanMessage
@@ -79,3 +81,14 @@ def test_missing_usage_with_a_budget_is_an_error():
     model, agent, config = build([message], "no-usage", prices=PRICES, budget_usd=1.0)
     with pytest.raises(MissingUsageError):
         agent.invoke({"messages": [HumanMessage("go")]}, config)
+
+
+def test_async_agents_pause_over_budget_the_same_way():
+    async def run():
+        model, agent, config = build(three_turn_script(), "async-pause", prices=PRICES, budget_usd=0.3)
+        paused = await agent.ainvoke({"messages": [HumanMessage("go")]}, config)
+        assert paused["__interrupt__"][0].value["type"] == "evenkeel_budget"
+        result = await agent.ainvoke(Command(resume={"approve": True, "budget_usd": 1.0}), config)
+        assert result["messages"][-1].content == "done"
+
+    asyncio.run(run())

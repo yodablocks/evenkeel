@@ -1,3 +1,5 @@
+import asyncio
+
 import pytest
 from langchain.agents import create_agent
 from langchain_core.messages import HumanMessage, ToolMessage
@@ -69,3 +71,19 @@ def test_a_malformed_resume_value_pauses_again_with_a_clear_error():
     agent.invoke(start(), config)
     again = agent.invoke(Command(resume="yes"), config)
     assert "decision" in again["__interrupt__"][0].value["error"]
+
+
+def test_async_agents_pause_and_resume_the_same_way():
+    # On Python 3.10, LangGraph's interrupt() cannot find its run inside async code, so this needs 3.11+.
+    async def run():
+        model = ScriptedChatModel(
+            script=[NeedsHumanError("refund over limit"), NeedsHumanError("refund over limit"), ai("done")]
+        )
+        agent = create_agent(model, middleware=[EvenKeelMiddleware()], checkpointer=InMemorySaver())
+        config = {"configurable": {"thread_id": "esc-async"}}
+        paused = await agent.ainvoke(start(), config)
+        assert paused["__interrupt__"][0].value["type"] == "evenkeel_escalation"
+        result = await agent.ainvoke(Command(resume={"decision": "retry", "hint": "approved"}), config)
+        assert result["messages"][-1].content == "done"
+
+    asyncio.run(run())
