@@ -9,8 +9,9 @@ story. In one conversation:
 2. Bad tool input: the model passes a malformed order id. The tool's error goes back to the model, which
    fixes it.
 3. Bad output: the model's reply is unusable. evenkeel retries with a hint saying what was wrong.
-4. Needs a person: a refund is over the agent's limit. The run pauses until a reviewer decides.
-5. Over budget: the run has spent its budget. It pauses again, and the reviewer raises the budget.
+4. Budget: the next call could cross the budget. evenkeel pauses before making it, so the budget is never
+   overshot, and the reviewer raises it.
+5. Needs a person: a refund is over the agent's limit. The run pauses until a reviewer decides.
 """
 
 from __future__ import annotations
@@ -82,6 +83,8 @@ class ScriptedModel(BaseChatModel):
     script: list[Any] = Field(default_factory=_script)
     _log: list[str] = PrivateAttr(default_factory=list)  # private, so pydantic shares the list, not a copy
     calls: int = 0
+    model_name: str = MODEL
+    max_tokens: int = 300  # the output cap check_before_call needs to work out a call's worst case
 
     @property
     def _llm_type(self) -> str:
@@ -160,7 +163,9 @@ def build_agent(log: list[str], resuming: dict[str, bool]) -> tuple[Any, Scripte
         model,
         tools=[lookup_order, refund],
         system_prompt="You are a support agent. Refunds over $500 need a person.",
-        middleware=[EvenKeelMiddleware(policy=narrated, budget_usd=BUDGET_USD, prices=PRICES)],
+        middleware=[
+            EvenKeelMiddleware(policy=narrated, budget_usd=BUDGET_USD, prices=PRICES, check_before_call=True)
+        ],
         checkpointer=InMemorySaver(),
     )
     return agent, model
@@ -189,7 +194,8 @@ def main() -> dict[str, Any]:
             say(
                 log,
                 "reviewer",
-                f"paused: spent ${payload['spent_usd']:.4f} of a ${payload['budget_usd']:.2f} budget. "
+                f"paused before a call: spent ${payload['spent_usd']:.4f} of a ${payload['budget_usd']:.2f} "
+                f"budget, and the next call could cost up to ${payload['next_call_max_usd']:.4f}. "
                 "Decision: raise it to $0.05.",
             )
         state = agent.invoke(Command(resume=answers[payload["type"]]), config)
