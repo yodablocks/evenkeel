@@ -1,0 +1,31 @@
+# Weekly update PRs, one grouped PR per ecosystem. CI runs on each of them.
+version: 2
+updates:
+  # The SHA-pinned actions in .github/workflows. Dependabot updates the SHA and the version comment.
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    cooldown:
+      default-days: 7
+    groups:
+      github-actions:
+        patterns: ["*"]
+
+  # Python packages from pyproject.toml and uv.lock.
+  - package-ecosystem: uv
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    # Only propose releases that are at least a week old: most malicious releases are caught and pulled within days.
+    cooldown:
+      default-days: 7
+    # evenkeel is a library: leave the lower bounds users install against alone, and only widen a cap
+    # (such as typesafe-sdk <0.8) when a new release falls outside it.
+    versioning-strategy: increase-if-necessary
+    open-pull-requests-limit: 5
+    groups:
+      python-dependencies:
+        patterns: ["*"]
