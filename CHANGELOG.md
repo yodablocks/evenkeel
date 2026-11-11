@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- A reply that was paid for and then rejected now counts toward `evenkeel_spent_usd`. Before, only the reply
+  that was finally accepted was counted, so a model call retried after bad output cost nothing to the budget.
+  evenkeel reads the rejected reply from LangChain's structured output errors (`ai_message`) or from a
+  `BadOutputError` raised with the reply as `output`. A reply it can't price warns instead of hiding the error.
+- LangChain's `StructuredOutputValidationError`, `MultipleStructuredOutputsError` and `OutputParserException`
+  are classified `bad_output` by the rule classifier, so they are retried with a hint instead of failing the
+  run as `fatal`.
+
 ## [0.2.1] - 2026-11-10
 
 ### Added

@@ -217,15 +217,49 @@ class EvenKeelMiddleware(AgentMiddleware):
         attach_attempts(ctx.error, records)
         raise ctx.error
 
+    def _rejected_reply_usd(self, error: BaseException) -> float:
+        """What a reply that was billed and then rejected cost: the AIMessage on a LangChain structured
+        output error (`ai_message`) or on an evenkeel error (`output`). 0 when the error carries no reply.
+        Never raises, so the call's own error is what the policy sees."""
+        if self._prices is None:
+            return 0.0
+        message = getattr(error, "ai_message", None)
+        if not isinstance(message, AIMessage):
+            message = getattr(error, "output", None)
+        if not isinstance(message, AIMessage):
+            return 0.0
+        try:
+            return self._prices.cost_usd(message)
+        except Exception as cost_error:
+            warnings.warn(
+                f"evenkeel could not price a rejected reply, so its cost is not counted: {cost_error}",
+                EvenKeelWarning,
+                stacklevel=2,
+            )
+            return 0.0
+
+    @staticmethod
+    def _spent_with(request: ModelRequest, rejected_usd: float) -> float | None:
+        """The run's spend including rejected replies, or None when there were none to add."""
+        if not rejected_usd:
+            return None
+        return (request.state or {}).get("evenkeel_spent_usd", 0.0) + rejected_usd
+
     @staticmethod
     def _model_result(
-        response: ModelResponse, records: list[AttemptRecord], new_budget: float | None = None
+        response: ModelResponse,
+        records: list[AttemptRecord],
+        new_budget: float | None = None,
+        spent_usd: float | None = None,
     ) -> Any:
         update: dict[str, Any] = {}
         if records:
             update["evenkeel_attempts"] = records
         if new_budget is not None:
             update["evenkeel_budget_usd"] = new_budget
+        if spent_usd is not None:
+            # after_model adds the accepted reply's cost on top of this.
+            update["evenkeel_spent_usd"] = spent_usd
         if not update:
             return response
         return ExtendedModelResponse(model_response=response, command=Command(update=update))
@@ -303,6 +337,7 @@ class EvenKeelMiddleware(AgentMiddleware):
         if not go_ahead:
             return self._declined(request)
         records: list[AttemptRecord] = []
+        rejected_usd = 0.0
         current = request
         attempt = 0
         escalated = False
@@ -313,6 +348,7 @@ class EvenKeelMiddleware(AgentMiddleware):
             except GraphBubbleUp:
                 raise
             except Exception as error:
+                rejected_usd += self._rejected_reply_usd(error)
                 ctx = self._context(error, step="model", attempt=attempt)
                 verdict = self._classify(ctx)
                 decision = decide(ctx, verdict, self._policy)
@@ -323,7 +359,7 @@ class EvenKeelMiddleware(AgentMiddleware):
                     self._sleep(nxt.delay_s)
                 current = nxt.request
                 continue
-            return self._model_result(response, records, new_budget)
+            return self._model_result(response, records, new_budget, self._spent_with(request, rejected_usd))
 
     async def awrap_model_call(
         self, request: ModelRequest, handler: Callable[[ModelRequest], Awaitable[ModelResponse]]
@@ -332,6 +368,7 @@ class EvenKeelMiddleware(AgentMiddleware):
         if not go_ahead:
             return self._declined(request)
         records: list[AttemptRecord] = []
+        rejected_usd = 0.0
         current = request
         attempt = 0
         escalated = False
@@ -342,6 +379,7 @@ class EvenKeelMiddleware(AgentMiddleware):
             except GraphBubbleUp:
                 raise
             except Exception as error:
+                rejected_usd += self._rejected_reply_usd(error)
                 ctx = self._context(error, step="model", attempt=attempt)
                 verdict = await self._aclassify(ctx)
                 decision = decide(ctx, verdict, self._policy)
@@ -352,7 +390,7 @@ class EvenKeelMiddleware(AgentMiddleware):
                     await self._asleep(nxt.delay_s)
                 current = nxt.request
                 continue
-            return self._model_result(response, records, new_budget)
+            return self._model_result(response, records, new_budget, self._spent_with(request, rejected_usd))
 
     # Tool calls
 

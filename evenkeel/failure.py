@@ -79,6 +79,10 @@ _TRANSIENT_NAMES = frozenset(
     }
 )
 _VALIDATION_NAMES = frozenset({"ValidationError"})
+# The model replied, but the reply could not be used: LangChain's structured output and output parser errors.
+_BAD_OUTPUT_NAMES = frozenset(
+    {"StructuredOutputValidationError", "MultipleStructuredOutputsError", "OutputParserException"}
+)
 # Network error codes, as strings on `code` (keel's list) or as numbers on `errno` (OSError, socket.gaierror).
 _TRANSIENT_CODES = frozenset(
     {"ETIMEDOUT", "ECONNRESET", "ECONNREFUSED", "EPIPE", "EAI_AGAIN", "UND_ERR_SOCKET"}
@@ -122,6 +126,8 @@ class RuleClassifier:
             return FailureVerdict("needs_human", 1.0)
         if isinstance(error, OverBudgetError):
             return FailureVerdict("over_budget", 1.0)
+        if any(cls.__name__ in _BAD_OUTPUT_NAMES for cls in type(error).__mro__):
+            return FailureVerdict("bad_output", 0.9)
 
         status = _http_status(error)
         if status is not None:

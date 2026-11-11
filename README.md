@@ -105,7 +105,7 @@ It's offline: the model is scripted and the tools fail on cue, so no API key is 
 | Kind | Example | Action |
 |---|---|---|
 | `transient` | 429, 503, timeout, dropped connection | Back off and retry the same call |
-| `bad_output` | Malformed output, a call that breaks the schema (recognised by Jev, or raised as `BadOutputError`) | Retry with a hint saying what was wrong |
+| `bad_output` | Malformed output, a call that breaks the schema (`BadOutputError`, LangChain's structured output and output parser errors, or recognised by Jev) | Retry with a hint saying what was wrong |
 | `bad_input` | Input a tool rejects (`BadInputError`, HTTP 400 or 422, a pydantic `ValidationError`) | Model call: fail. Tool call: return the error to the model so it fixes its arguments |
 | `needs_human` | Refund over a limit, a policy block | Pause with `interrupt()` and wait for a decision |
 | `fatal` | A bug, bad credentials | Re-raise the original error at once |
@@ -144,6 +144,19 @@ agent.invoke(Command(resume={"approve": False}), config)  # ends the run
 The budget applies to each run: every new `invoke` on a thread starts with zero spend and the configured
 budget.
 
+A reply that was paid for and then rejected counts too, so retries can't run up cost unseen. evenkeel adds its
+cost when the error carries the reply: LangChain's structured output errors do (`ai_message`), and so does a
+`BadOutputError` raised with the reply as `output`:
+
+```python
+raise BadOutputError("The reply has no answer for the customer", output=reply)  # reply: the AIMessage
+```
+
+An error without the reply adds nothing, as before. Rejected replies are added when the call finally succeeds,
+so they are not counted when the call instead ends with an error, or pauses for a person (LangGraph replays
+the call on resume, and counts the replay's replies). The budget sees them before the next model call, not
+between retries of the same call; `max_attempts` bounds those.
+
 ### Checking a call before it runs
 
 By default the budget is checked against what has been spent, so the call that crosses it still runs. With
@@ -173,7 +186,7 @@ the model, which the provider enforces; the model's own cap always wins over the
 ## Limitations
 
 - **Budgets can overshoot by one call.** The check runs before a model call, but a call's cost is known only
-  after it. keel has the same limitation. With `check_before_call=True` and an output cap on the model, the
+  after it. With `check_before_call=True` and an output cap on the model, the
   overshoot is limited to the estimate's error: provider overhead for tool formatting, and other middleware
   changing the model, prompt or tools after evenkeel has looked at the call.
 - **No built-in prices.** You supply them; a model without a price, or a response without token usage, is an

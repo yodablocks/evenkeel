@@ -4,11 +4,14 @@ middleware must change before it supports that version."""
 import operator
 from typing import Annotated, NotRequired
 
+import pytest
 from langchain.agents import create_agent
+from langchain.agents.structured_output import ToolStrategy
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 from langchain_core.tools import tool
 from langgraph.checkpoint.memory import InMemorySaver
 from langgraph.errors import GraphInterrupt
+from pydantic import BaseModel
 
 from evenkeel._compat import (
     AgentMiddleware,
@@ -20,6 +23,8 @@ from evenkeel._compat import (
     hook_config,
     interrupt,
 )
+from evenkeel.budget import ModelPrice, PriceTable
+from evenkeel.middleware import EvenKeelMiddleware
 from tests.fakes import ScriptedChatModel, ai, tool_call
 
 
@@ -165,3 +170,32 @@ def test_wrap_model_call_can_answer_without_calling_the_model_and_end_the_run():
     result = create_agent(model, middleware=[Answer()]).invoke(start())
     assert model.calls == []
     assert result["messages"][-1].content == "stopped"
+
+
+def test_a_structured_output_error_reaches_wrap_model_call_with_the_rejected_reply():
+    # evenkeel counts a rejected reply's cost from the error's ai_message, and retries it as bad_output.
+    class Answer(BaseModel):
+        amount: int
+
+    prices = PriceTable({"priced-model": ModelPrice(input_per_mtok=1.0, output_per_mtok=1.0)})
+    rejected = ai(
+        tool_calls=[tool_call("Answer", {"amount": "lots"}, "c1")], model="priced-model", tokens=(100, 50)
+    )
+    accepted = ai(
+        tool_calls=[tool_call("Answer", {"amount": 5}, "c2")], model="priced-model", tokens=(100, 50)
+    )
+    model = ScriptedChatModel(script=[rejected, accepted])
+    agent = create_agent(
+        model,
+        response_format=ToolStrategy(Answer, handle_errors=False),
+        middleware=[EvenKeelMiddleware(prices=prices)],
+        checkpointer=InMemorySaver(),
+    )
+    result = agent.invoke(start(), {"configurable": {"thread_id": "structured"}})
+
+    assert len(model.calls) == 2
+    assert result["structured_response"] == Answer(amount=5)
+    assert result["evenkeel_spent_usd"] == pytest.approx(2 * 0.00015), "the rejected reply is counted"
+    assert [(r["error_type"], r["kind"]) for r in result["evenkeel_attempts"]] == [
+        ("StructuredOutputValidationError", "bad_output")
+    ]
