@@ -314,18 +314,19 @@ the model, which the provider enforces; the model's own cap always wins over the
   LangGraph re-runs the paused node. For a tool with side effects, make it idempotent or use `skip`.
 - **Classification is only as good as the classifier.** Rules only recognise explicit signals (status codes,
   network errors, evenkeel's error classes): on keel's 75 error messages from public SDK issues they pick the
-  right kind 29 times and the right action 39 times. With Jev the results are below.
+  right kind 30 times and the right action 40 times. With Jev the results are below.
 
 ## Classifier accuracy
 
 Measured with `evals/jev_eval.py` on keel's labelled error sets: 75 error messages from public SDK issues and
 60 sampled from 13 other repositories. Jev pinned to `jev-1.13.0`, one run on 2026-10-14. "Right action" counts
 a verdict as right when the default policy does the same thing as for the label (`bad_input` and `fatal` both
-fail).
+fail). The rules-only row was scored again offline on 0.2.2 (2026-11-11), whose rules also recognise LangChain's
+output errors; the Jev row is from 0.2.1.
 
 | Classifier | Public set, right kind | Public set, right action | Fresh set, right kind | Fresh set, right action |
 |---|---|---|---|---|
-| Rules only | 29 / 75 (39%) | 39 / 75 (52%) | 43 / 60 (72%) | 48 / 60 (80%) |
+| Rules only | 30 / 75 (40%) | 40 / 75 (53%) | 43 / 60 (72%) | 48 / 60 (80%) |
 | `JevClassifier` (rules for explicit signals, Jev for the rest, rules below 0.5 confidence) | 50 / 75 (67%) | 63 / 75 (84%) | 49 / 60 (82%) | 56 / 60 (93%) |
 
 Caveats: the labels are one person's (keel's author, who also wrote the classifier prompt), most messages come
