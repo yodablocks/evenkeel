@@ -152,7 +152,10 @@ cost when the error carries the reply: LangChain's structured output errors do (
 raise BadOutputError("The reply has no answer for the customer", output=reply)  # reply: the AIMessage
 ```
 
-An error without the reply adds nothing, as before.
+An error without the reply adds nothing, as before. Rejected replies are added when the call finally succeeds,
+so they are not counted when the call instead ends with an error, or pauses for a person (LangGraph replays
+the call on resume, and counts the replay's replies). The budget sees them before the next model call, not
+between retries of the same call; `max_attempts` bounds those.
 
 ### Checking a call before it runs
 
