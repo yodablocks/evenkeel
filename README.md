@@ -23,6 +23,123 @@ for approvals fixed in advance.
     pip install evenkeel          # rule-based classification
     pip install "evenkeel[jev]"   # adds TypeSafe's Jev classifier
 
+## Try it in five minutes
+
+No API key needed: the model is scripted, and everything else is real LangChain and evenkeel.
+
+    pip install evenkeel
+
+Save this as `quickstart.py` and run `python quickstart.py`:
+
+```python
+"""evenkeel in five minutes, with no API key: a refund agent that stops before it can overspend."""
+
+from langchain.agents import create_agent
+from langchain.agents.structured_output import ToolStrategy
+from langchain_core.language_models.fake_chat_models import GenericFakeChatModel
+from langchain_core.messages import AIMessage, HumanMessage
+from langchain_core.tools import tool
+from langgraph.checkpoint.memory import InMemorySaver
+from langgraph.types import Command
+from pydantic import BaseModel
+
+from evenkeel import EvenKeelMiddleware, ModelPrice, PriceTable
+
+
+class Refund(BaseModel):
+    order_id: str
+    amount_usd: float
+
+
+@tool
+def lookup_order(order_id: str) -> str:
+    """Look up an order."""
+    return "A-1042: blender, $64, arrived broken"
+
+
+def reply(name: str, **args) -> AIMessage:
+    """A model reply calling `name`, with the token usage a provider reports."""
+    usage = {"input_tokens": 20_000, "output_tokens": 500, "total_tokens": 20_500}
+    call = {"name": name, "args": args, "id": f"call-{name}", "type": "tool_call"}
+    return AIMessage(
+        "", tool_calls=[call], usage_metadata=usage, response_metadata={"model_name": "gpt-4o-mini"}
+    )
+
+
+class ScriptedModel(GenericFakeChatModel):
+    """Plays back replies. In your agent, use a real model with an output cap, such as
+    init_chat_model("openai:gpt-4o-mini", max_tokens=1000)."""
+
+    model_name: str = "gpt-4o-mini"
+    max_tokens: int = 1000
+
+    def bind_tools(self, tools, **kwargs):
+        return self
+
+
+model = ScriptedModel(
+    messages=iter(
+        [
+            reply("lookup_order", order_id="A-1042"),
+            reply("Refund", order_id="A-1042", amount_usd="sixty-four"),  # breaks the schema
+            reply("Refund", order_id="A-1042", amount_usd=64),
+        ]
+    )
+)
+agent = create_agent(
+    model,
+    tools=[lookup_order],
+    response_format=ToolStrategy(Refund, handle_errors=False),
+    middleware=[
+        EvenKeelMiddleware(
+            budget_usd=0.005,
+            prices=PriceTable({"gpt-4o-mini": ModelPrice(input_per_mtok=0.15, output_per_mtok=0.60)}),
+            check_before_call=True,  # pause before a call whose worst case would cross the budget
+        )
+    ],
+    checkpointer=InMemorySaver(),  # needed for pauses
+)
+config = {"configurable": {"thread_id": "quickstart"}}
+
+# 1. One call ($0.0033) fits the $0.005 budget. The next could cost up to $0.0037, so evenkeel pauses first.
+state = agent.invoke({"messages": [HumanMessage("Refund order A-1042, it arrived broken.")]}, config)
+pause = state["__interrupt__"][0].value
+spent, budget, next_max = pause["spent_usd"], pause["budget_usd"], pause["next_call_max_usd"]
+print(f"Paused: spent ${spent:.4f} of ${budget}, next call up to ${next_max:.4f}")
+
+# 2. A person raises the budget. The next reply breaks the Refund schema: evenkeel classifies it as bad output
+#    and retries with a hint saying what was wrong. The rejected reply was paid for, so it counts.
+state = agent.invoke(Command(resume={"approve": True, "budget_usd": 0.02}), config)
+for attempt in state["evenkeel_attempts"]:
+    print(f"Retried: {attempt['error_type']} -> {attempt['kind']}, {attempt['action']}")
+print(f"Done: {state['structured_response']!r}, spent ${state['evenkeel_spent_usd']:.4f} for 3 calls")
+```
+
+It prints:
+
+```
+Paused: spent $0.0033 of $0.005, next call up to $0.0037
+Retried: StructuredOutputValidationError -> bad_output, retry_modified
+Done: Refund(order_id='A-1042', amount_usd=64.0), spent $0.0099 for 3 calls
+```
+
+1. **It stops before it can overspend.** One call fits the $0.005 budget. The next could cost up to $0.0037,
+   so evenkeel pauses before making it, and a person decides.
+2. **It retries bad output with a hint.** The reply breaks the `Refund` schema, so evenkeel retries it with a
+   hint saying what was wrong. The rejected reply was paid for, so it counts toward the spend.
+
+On your own agent, replace the scripted model with a real one that caps its output (the cap is how evenkeel
+works out a call's worst case), and add a price for it:
+
+```python
+from langchain.chat_models import init_chat_model
+
+model = init_chat_model("openai:gpt-4o-mini", max_tokens=1000)
+```
+
+Tried it? [Open an issue](https://github.com/yodablocks/evenkeel/issues/new) and say which part you used, the
+budget or the failure handling, and what got in the way. It is the most useful thing you can send.
+
 ## Use
 
 ```python
@@ -197,18 +314,19 @@ the model, which the provider enforces; the model's own cap always wins over the
   LangGraph re-runs the paused node. For a tool with side effects, make it idempotent or use `skip`.
 - **Classification is only as good as the classifier.** Rules only recognise explicit signals (status codes,
   network errors, evenkeel's error classes): on keel's 75 error messages from public SDK issues they pick the
-  right kind 29 times and the right action 39 times. With Jev the results are below.
+  right kind 30 times and the right action 40 times. With Jev the results are below.
 
 ## Classifier accuracy
 
 Measured with `evals/jev_eval.py` on keel's labelled error sets: 75 error messages from public SDK issues and
 60 sampled from 13 other repositories. Jev pinned to `jev-1.13.0`, one run on 2026-10-14. "Right action" counts
 a verdict as right when the default policy does the same thing as for the label (`bad_input` and `fatal` both
-fail).
+fail). The rules-only row was scored again offline on 0.2.2 (2026-11-11), whose rules also recognise LangChain's
+output errors; the Jev row is from 0.2.1.
 
 | Classifier | Public set, right kind | Public set, right action | Fresh set, right kind | Fresh set, right action |
 |---|---|---|---|---|
-| Rules only | 29 / 75 (39%) | 39 / 75 (52%) | 43 / 60 (72%) | 48 / 60 (80%) |
+| Rules only | 30 / 75 (40%) | 40 / 75 (53%) | 43 / 60 (72%) | 48 / 60 (80%) |
 | `JevClassifier` (rules for explicit signals, Jev for the rest, rules below 0.5 confidence) | 50 / 75 (67%) | 63 / 75 (84%) | 49 / 60 (82%) | 56 / 60 (93%) |
 
 Caveats: the labels are one person's (keel's author, who also wrote the classifier prompt), most messages come
