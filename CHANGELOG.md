@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.2] - 2026-11-11
+
 ### Fixed
 - A reply that was paid for and then rejected now counts toward `evenkeel_spent_usd`. Before, only the reply
   that was finally accepted was counted, so a model call retried after bad output cost nothing to the budget.
@@ -66,7 +68,8 @@ First release.
 - `RuleClassifier` and `JevClassifier` (optional `jev` extra), ported from keel.
 - Contract tests for the LangChain, LangGraph and typesafe-sdk behaviour the middleware relies on.
 
-[Unreleased]: https://github.com/yodablocks/evenkeel/compare/v0.2.1...HEAD
+[Unreleased]: https://github.com/yodablocks/evenkeel/compare/v0.2.2...HEAD
+[0.2.2]: https://github.com/yodablocks/evenkeel/releases/tag/v0.2.2
 [0.2.1]: https://github.com/yodablocks/evenkeel/releases/tag/v0.2.1
 [0.2.0]: https://github.com/yodablocks/evenkeel/releases/tag/v0.2.0
 [0.1.1]: https://github.com/yodablocks/evenkeel/releases/tag/v0.1.1

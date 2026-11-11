@@ -15,7 +15,7 @@ from .failure import (
 from .jev import JevClassifier
 from .middleware import EvenKeelMiddleware, EvenKeelWarning
 
-__version__ = "0.2.1"
+__version__ = "0.2.2"
 
 __all__ = [
     "AttemptRecord",
